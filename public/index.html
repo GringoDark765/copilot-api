@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copilot API Console</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        space: {
+                            900: '#0f0f1a',
+                            950: '#080810',
+                            border: '#1e1e3f'
+                        },
+                        neon: {
+                            purple: '#a855f7',
+                            cyan: '#22d3ee',
+                            green: '#22c55e'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f0f1a; }
+        ::-webkit-scrollbar-thumb { background: #3f3f5a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5f5f7a; }
+
+        /* Nav item active state */
+        .nav-item.active {
+            background: linear-gradient(90deg, rgba(168, 85, 247, 0.1), transparent);
+            border-left: 2px solid #a855f7;
+            color: white;
+        }
+
+        /* Glow effects */
+        .glow-purple { box-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
+        .glow-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.4); }
+    </style>
+</head>
+
+<body class="bg-space-950 text-gray-300 font-sans antialiased min-h-screen" x-cloak x-data="app">
+
+    <!-- Toast Notification -->
+    <div class="fixed top-4 right-4 z-50 flex flex-col gap-2">
+        <template x-if="toast.show">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-x-8"
+                 x-transition:enter-end="opacity-100 translate-x-0"
+                 x-transition:leave="transition ease-in duration-200"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0 translate-x-8"
+                 class="px-4 py-3 rounded-lg border backdrop-blur-md min-w-[300px]"
+                 :class="{
+                     'bg-green-500/10 border-green-500/20 text-green-400': toast.type === 'success',
+                     'bg-red-500/10 border-red-500/20 text-red-400': toast.type === 'error',
+                     'bg-blue-500/10 border-blue-500/20 text-blue-400': toast.type === 'info',
+                     'bg-yellow-500/10 border-yellow-500/20 text-yellow-400': toast.type === 'warning'
+                 }">
+                <span x-text="toast.message" class="font-mono text-sm"></span>
+            </div>
+        </template>
+
+        <!-- Persistent Notifications -->
+        <template x-for="(notif, index) in notifications" :key="notif.id">
+            <div x-transition:enter="transition ease-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-x-8"
+                 x-transition:enter-end="opacity-100 translate-x-0"
+                 class="px-4 py-3 rounded-lg border backdrop-blur-md min-w-[300px] relative"
+                 :class="{
+                     'bg-red-500/10 border-red-500/20': notif.type === 'error',
+                     'bg-yellow-500/10 border-yellow-500/20': notif.type === 'warning'
+                 }">
+                <button @click="dismissNotification(notif.id)"
+                        class="absolute top-2 right-2 text-gray-400 hover:text-white">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+                <div class="flex items-start gap-2 pr-6">
+                    <svg x-show="notif.type === 'warning'" class="w-5 h-5 text-yellow-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <svg x-show="notif.type === 'error'" class="w-5 h-5 text-red-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                        <div class="font-medium text-sm" :class="notif.type === 'warning' ? 'text-yellow-400' : 'text-red-400'" x-text="notif.title"></div>
+                        <div class="text-xs text-gray-400 mt-1" x-text="notif.message"></div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="h-14 border-b border-space-border flex items-center px-6 justify-between bg-space-900/50 backdrop-blur-md sticky top-0 z-40">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple">
+                CP
+            </div>
+            <div class="flex flex-col">
+                <span class="text-sm font-bold tracking-wide text-white">COPILOT API</span>
+                <span class="text-[10px] text-gray-500 font-mono tracking-wider">PROXY CONSOLE</span>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-4">
+            <!-- Connection Status -->
+            <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border"
+                 :class="status.connected
+                     ? 'bg-neon-green/10 border-neon-green/20 text-neon-green'
+                     : 'bg-red-500/10 border-red-500/20 text-red-500'">
+                <div class="w-1.5 h-1.5 rounded-full"
+                     :class="status.connected ? 'bg-neon-green glow-green' : 'bg-red-500'"></div>
+                <span x-text="status.connected ? 'Online' : 'Offline'"></span>
+            </div>
+
+            <!-- Refresh Button -->
+            <button @click="fetchData()"
+                    :disabled="loading"
+                    x-show="auth.authenticated || !auth.passwordRequired"
+                    class="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-50">
+                <svg class="w-4 h-4" :class="{'animate-spin': loading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+
+            <!-- Logout Button -->
+            <button @click="logout()"
+                    x-show="auth.authenticated && auth.passwordRequired"
+                    class="px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/20 transition-colors">
+                Logout
+            </button>
+        </div>
+    </nav>
+
+    <!-- Login Modal -->
+    <template x-if="auth.passwordRequired && !auth.authenticated && !auth.checking">
+        <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
+            <div class="bg-space-900 border border-space-border rounded-xl p-8 w-full max-w-md mx-4 shadow-2xl">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="w-10 h-10 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple">
+                        CP
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-bold text-white">Copilot API Console</h2>
+                        <p class="text-xs text-gray-500">Enter password to continue</p>
+                    </div>
+                </div>
+                
+                <form @submit.prevent="login()" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
+                        <input type="password" 
+                               x-model="auth.password"
+                               class="w-full px-4 py-3 bg-space-950 border border-space-border rounded-lg text-white focus:ring-2 focus:ring-neon-purple/50 focus:border-neon-purple outline-none transition-all"
+                               placeholder="Enter WebUI password"
+                               autofocus>
+                    </div>
+                    <button type="submit"
+                            :disabled="loading || !auth.password"
+                            class="w-full py-3 rounded-lg bg-gradient-to-r from-neon-purple to-blue-600 text-white font-medium hover:opacity-90 disabled:opacity-50 transition-all">
+                        <span x-text="loading ? 'Authenticating...' : 'Login'"></span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </template>
+
+    <!-- Loading State -->
+    <template x-if="auth.checking">
+        <div class="fixed inset-0 bg-space-950 flex items-center justify-center z-50">
+            <div class="flex flex-col items-center gap-4">
+                <div class="w-12 h-12 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple animate-pulse">
+                    CP
+                </div>
+                <p class="text-gray-500 text-sm">Loading...</p>
+            </div>
+        </div>
+    </template>
+
+    <!-- Layout -->
+    <div class="flex h-[calc(100vh-56px)]" x-show="auth.authenticated || !auth.passwordRequired">
+        
+        <!-- Sidebar -->
+        <aside class="w-64 border-r border-space-border bg-space-900/30 flex flex-col py-6 flex-shrink-0">
+            
+            <div class="px-4 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest">Main</div>
+            <nav class="flex flex-col gap-1">
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'dashboard'}"
+                        @click="activeTab = 'dashboard'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                    <span>Dashboard</span>
+                </button>
+                
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'models'}"
+                        @click="activeTab = 'models'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                    <span>Models</span>
+                </button>
+            </nav>
+            
+            <div class="px-4 mt-8 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest">System</div>
+            <nav class="flex flex-col gap-1">
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'usage'}"
+                        @click="activeTab = 'usage'; fetchAccountsQuota()">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    <span>Usage</span>
+                </button>
+
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'accounts'}"
+                        @click="activeTab = 'accounts'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                    <span>Accounts</span>
+                    <span x-show="accountPool.accounts.length > 0"
+                          class="ml-auto px-2 py-0.5 text-xs rounded-full bg-neon-purple/20 text-neon-purple"
+                          x-text="accountPool.accounts.length"></span>
+                </button>
+                
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'logs'}"
+                        @click="activeTab = 'logs'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span>Logs</span>
+                </button>
+                
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'settings'}"
+                        @click="activeTab = 'settings'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span>Settings</span>
+                </button>
+            </nav>
+
+            <div class="px-4 mt-8 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest">Advanced</div>
+            <nav class="flex flex-col gap-1">
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'history'}"
+                        @click="activeTab = 'history'; fetchRequestHistory()">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>History</span>
+                </button>
+
+                <button class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+                        :class="{'active': activeTab === 'playground'}"
+                        @click="activeTab = 'playground'">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Playground</span>
+                </button>
+            </nav>
+            
+            <!-- Footer -->
+            <div class="mt-auto px-6 py-4 border-t border-space-border">
+                <div class="text-xs text-gray-600 font-mono">
+                    <div>User: <span class="text-gray-400" x-text="status.user || 'N/A'"></span></div>
+                    <div>Version: <span class="text-gray-400" x-text="status.version || 'N/A'"></span></div>
+                    <div>Account: <span class="text-gray-400" x-text="status.accountType || 'N/A'"></span></div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="flex-1 overflow-auto p-6">
+            
+            <!-- Dashboard View -->
+            <div x-show="activeTab === 'dashboard'" x-cloak>
+                <h1 class="text-2xl font-bold text-white mb-6">Dashboard</h1>
+                
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                    <!-- Total Requests -->
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Total Requests (24h)</div>
+                        <div class="text-3xl font-bold text-white" x-text="usageStats.totalRequests || 0"></div>
+                    </div>
+                    
+                    <!-- Models Available -->
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Models Available</div>
+                        <div class="text-3xl font-bold text-neon-purple" x-text="models.length"></div>
+                    </div>
+                    
+                    <!-- Account Type -->
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Copilot Plan</div>
+                        <div class="text-3xl font-bold text-neon-cyan capitalize" x-text="copilotUsage.copilot_plan || status.accountType || 'N/A'"></div>
+                    </div>
+                    
+                    <!-- Quota Reset -->
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Quota Resets</div>
+                        <div class="text-xl font-bold text-neon-green" x-text="copilotUsage.quota_reset_date || 'N/A'"></div>
+                    </div>
+                </div>
+
+                <!-- Usage Chart -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-8">
+                    <h2 class="text-lg font-semibold text-white mb-4">Usage by Model (24h)</h2>
+                    <div class="h-64">
+                        <canvas id="usageChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Top Models -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                    <h2 class="text-lg font-semibold text-white mb-4">Top Models</h2>
+                    <div class="space-y-3">
+                        <template x-for="(count, model) in usageStats.byModel" :key="model">
+                            <div class="flex items-center justify-between py-2 border-b border-space-border last:border-0">
+                                <span class="font-mono text-sm" x-text="model"></span>
+                                <span class="text-neon-purple font-bold" x-text="count + ' requests'"></span>
+                            </div>
+                        </template>
+                        <div x-show="Object.keys(usageStats.byModel || {}).length === 0" class="text-gray-500 text-center py-4">
+                            No usage data yet
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Usage View -->
+            <div x-show="activeTab === 'usage'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">Usage & Quotas</h1>
+                    <button @click="fetchAccountsQuota()"
+                            class="px-4 py-2 text-sm bg-neon-cyan/20 text-neon-cyan rounded-lg hover:bg-neon-cyan/30 transition-colors">
+                        Refresh Quotas
+                    </button>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Total Accounts</div>
+                        <div class="text-3xl font-bold text-white" x-text="accountPool.accounts.length"></div>
+                    </div>
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Active Accounts</div>
+                        <div class="text-3xl font-bold text-neon-green" x-text="accountPool.accounts.filter(a => a.active && !a.paused).length"></div>
+                    </div>
+                    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                        <div class="text-gray-500 text-sm font-medium mb-2">Quota Reset Date</div>
+                        <div class="text-xl font-bold text-neon-cyan" x-text="accountPool.accounts[0]?.quota?.resetDate ? new Date(accountPool.accounts[0].quota.resetDate).toLocaleDateString() : 'N/A'"></div>
+                    </div>
+                </div>
+
+                <!-- All Accounts Quota -->
+                <div class="space-y-4">
+                    <template x-for="account in accountPool.accounts" :key="account.id">
+                        <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold">
+                                        <span x-text="account.login.charAt(0).toUpperCase()"></span>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-white" x-text="account.login"></h3>
+                                        <div class="text-xs text-gray-500">
+                                            <span x-text="account.requestCount + ' requests'"></span>
+                                            <span class="mx-1">•</span>
+                                            <span x-text="'Last used: ' + formatRelativeTime(account.lastUsed)"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="px-2 py-1 text-xs rounded"
+                                          :class="{
+                                              'bg-neon-green/10 text-neon-green': account.active && !account.rateLimited && !account.paused,
+                                              'bg-yellow-500/10 text-yellow-400': account.rateLimited && !account.paused,
+                                              'bg-orange-500/10 text-orange-400': account.paused && account.pausedReason === 'quota',
+                                              'bg-gray-500/10 text-gray-400': account.paused && account.pausedReason !== 'quota',
+                                              'bg-red-500/10 text-red-400': !account.active && !account.paused
+                                          }"
+                                          x-text="account.paused ? (account.pausedReason === 'quota' ? 'Low Quota' : 'Paused') : (account.active ? (account.rateLimited ? 'Rate Limited' : 'Active') : 'Inactive')">
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Quota Bars -->
+                            <template x-if="account.quota">
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <!-- Chat Quota -->
+                                    <div class="bg-space-950 rounded-lg p-4">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <h4 class="font-medium text-white text-sm">Chat</h4>
+                                            <span x-show="account.quota?.chat?.unlimited" class="px-2 py-0.5 text-xs bg-neon-green/20 text-neon-green rounded">Unlimited</span>
+                                        </div>
+                                        <div class="flex justify-between text-sm mb-2">
+                                            <span class="text-gray-400">Remaining</span>
+                                            <span class="text-white" x-text="account.quota?.chat?.unlimited ? '∞' : (account.quota?.chat?.remaining + ' / ' + account.quota?.chat?.entitlement)"></span>
+                                        </div>
+                                        <div class="w-full bg-space-800 rounded-full h-2">
+                                            <div class="h-2 rounded-full bg-gradient-to-r from-neon-cyan to-blue-500 transition-all"
+                                                 :style="'width: ' + (account.quota?.chat?.unlimited ? 100 : account.quota?.chat?.percentRemaining) + '%'"></div>
+                                        </div>
+                                        <div class="text-xs text-gray-500 mt-1" x-text="(account.quota?.chat?.percentRemaining?.toFixed(1) || 0) + '% remaining'"></div>
+                                    </div>
+
+                                    <!-- Completions Quota -->
+                                    <div class="bg-space-950 rounded-lg p-4">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <h4 class="font-medium text-white text-sm">Completions</h4>
+                                            <span x-show="account.quota?.completions?.unlimited" class="px-2 py-0.5 text-xs bg-neon-green/20 text-neon-green rounded">Unlimited</span>
+                                        </div>
+                                        <div class="flex justify-between text-sm mb-2">
+                                            <span class="text-gray-400">Remaining</span>
+                                            <span class="text-white" x-text="account.quota?.completions?.unlimited ? '∞' : (account.quota?.completions?.remaining + ' / ' + account.quota?.completions?.entitlement)"></span>
+                                        </div>
+                                        <div class="w-full bg-space-800 rounded-full h-2">
+                                            <div class="h-2 rounded-full bg-gradient-to-r from-neon-purple to-pink-500 transition-all"
+                                                 :style="'width: ' + (account.quota?.completions?.unlimited ? 100 : account.quota?.completions?.percentRemaining) + '%'"></div>
+                                        </div>
+                                        <div class="text-xs text-gray-500 mt-1" x-text="(account.quota?.completions?.percentRemaining?.toFixed(1) || 0) + '% remaining'"></div>
+                                    </div>
+
+                                    <!-- Premium Interactions Quota -->
+                                    <div class="bg-space-950 rounded-lg p-4">
+                                        <div class="flex items-center justify-between mb-3">
+                                            <h4 class="font-medium text-white text-sm">Premium</h4>
+                                            <span x-show="account.quota?.premiumInteractions?.unlimited" class="px-2 py-0.5 text-xs bg-neon-green/20 text-neon-green rounded">Unlimited</span>
+                                        </div>
+                                        <div class="flex justify-between text-sm mb-2">
+                                            <span class="text-gray-400">Remaining</span>
+                                            <span class="text-white" x-text="account.quota?.premiumInteractions?.unlimited ? '∞' : (account.quota?.premiumInteractions?.remaining + ' / ' + account.quota?.premiumInteractions?.entitlement)"></span>
+                                        </div>
+                                        <div class="w-full bg-space-800 rounded-full h-2">
+                                            <div class="h-2 rounded-full transition-all"
+                                                 :class="{
+                                                     'bg-gradient-to-r from-neon-green to-emerald-500': account.quota?.premiumInteractions?.percentRemaining > 50,
+                                                     'bg-gradient-to-r from-yellow-500 to-orange-500': account.quota?.premiumInteractions?.percentRemaining <= 50 && account.quota?.premiumInteractions?.percentRemaining > 20,
+                                                     'bg-gradient-to-r from-red-500 to-pink-500': account.quota?.premiumInteractions?.percentRemaining <= 20
+                                                 }"
+                                                 :style="'width: ' + (account.quota?.premiumInteractions?.unlimited ? 100 : account.quota?.premiumInteractions?.percentRemaining) + '%'"></div>
+                                        </div>
+                                        <div class="text-xs text-gray-500 mt-1" x-text="(account.quota?.premiumInteractions?.percentRemaining?.toFixed(1) || 0) + '% remaining'"></div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- No quota data -->
+                            <template x-if="!account.quota">
+                                <div class="text-center py-6 text-gray-500">
+                                    <svg class="w-8 h-8 mx-auto mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                    </svg>
+                                    <p class="text-sm">No quota data available</p>
+                                    <p class="text-xs mt-1">Click "Refresh Quotas" to fetch quota information</p>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- No accounts -->
+                    <div x-show="accountPool.accounts.length === 0" class="bg-space-900 border border-space-border rounded-xl p-12 text-center">
+                        <svg class="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <p class="text-gray-400 mb-2">No accounts configured</p>
+                        <p class="text-sm text-gray-600">Add GitHub accounts in the Accounts tab to see usage quotas</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models View -->
+            <div x-show="activeTab === 'models'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">Available Models</h1>
+                    <div class="text-sm text-gray-400">
+                        Showing <span class="text-white" x-text="filteredModels.length"></span> of <span class="text-white" x-text="models.length"></span> models
+                    </div>
+                </div>
+
+                <!-- Filter Buttons -->
+                <div class="flex flex-wrap gap-2 mb-6">
+                    <button @click="modelFilter = 'all'"
+                            class="px-4 py-2 text-sm rounded-lg transition-colors"
+                            :class="modelFilter === 'all' ? 'bg-neon-purple text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                        All
+                    </button>
+                    <button @click="modelFilter = 'openai'"
+                            class="px-4 py-2 text-sm rounded-lg transition-colors"
+                            :class="modelFilter === 'openai' ? 'bg-emerald-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                        OpenAI
+                    </button>
+                    <button @click="modelFilter = 'anthropic'"
+                            class="px-4 py-2 text-sm rounded-lg transition-colors"
+                            :class="modelFilter === 'anthropic' ? 'bg-orange-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                        Anthropic
+                    </button>
+                    <button @click="modelFilter = 'google'"
+                            class="px-4 py-2 text-sm rounded-lg transition-colors"
+                            :class="modelFilter === 'google' ? 'bg-blue-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                        Google
+                    </button>
+                    <button @click="modelFilter = 'other'"
+                            class="px-4 py-2 text-sm rounded-lg transition-colors"
+                            :class="modelFilter === 'other' ? 'bg-gray-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                        Other
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <template x-for="(model, index) in filteredModels" :key="index">
+                        <div class="bg-space-900 border border-space-border rounded-xl p-5 hover:border-neon-purple/30 transition-colors">
+                            <!-- Header -->
+                            <div class="flex items-start justify-between mb-3">
+                                <div class="flex-1 min-w-0">
+                                    <h3 class="font-bold text-white truncate" x-text="model.id" :title="model.id"></h3>
+                                    <p class="text-sm text-gray-400" x-text="model.name" x-show="model.name && model.name !== model.id"></p>
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        <span x-text="model.vendor"></span>
+                                        <span x-show="model.version" class="text-gray-600"> v<span x-text="model.version"></span></span>
+                                    </p>
+                                </div>
+                                <div class="flex flex-col gap-1 ml-2">
+                                    <span x-show="model.preview" class="px-2 py-0.5 text-xs bg-yellow-500/10 text-yellow-500 rounded">Preview</span>
+                                    <span x-show="model.policy?.state === 'accepted'" class="px-2 py-0.5 text-xs bg-blue-500/10 text-blue-400 rounded">Policy</span>
+                                </div>
+                            </div>
+
+                            <!-- Model Info Grid -->
+                            <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-3">
+                                <div>
+                                    <span class="text-gray-500">Family:</span>
+                                    <span class="text-white ml-1" x-text="model.capabilities?.family || 'N/A'"></span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500">Type:</span>
+                                    <span class="text-white ml-1" x-text="model.capabilities?.type || 'N/A'"></span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500">Tokenizer:</span>
+                                    <span class="text-gray-300 ml-1" x-text="model.capabilities?.tokenizer || 'N/A'"></span>
+                                </div>
+                                <div x-show="getModelLimit(model, 'maxInputs')">
+                                    <span class="text-gray-500">Max Inputs:</span>
+                                    <span class="text-gray-300 ml-1" x-text="getModelLimit(model, 'maxInputs')"></span>
+                                </div>
+                            </div>
+
+                            <!-- Token Limits -->
+                            <div class="bg-space-950 rounded-lg p-3 mb-3">
+                                <div class="text-xs text-gray-500 mb-2 font-medium">Token Limits</div>
+                                <div class="grid grid-cols-3 gap-2 text-center">
+                                    <div>
+                                        <div class="text-neon-cyan font-bold text-sm" x-text="formatNumber(getModelLimit(model, 'maxContextTokens'))"></div>
+                                        <div class="text-gray-500 text-xs">Context</div>
+                                    </div>
+                                    <div>
+                                        <div class="text-neon-purple font-bold text-sm" x-text="formatNumber(getModelLimit(model, 'maxOutputTokens'))"></div>
+                                        <div class="text-gray-500 text-xs">Output</div>
+                                    </div>
+                                    <div>
+                                        <div class="text-neon-green font-bold text-sm" x-text="formatNumber(getModelLimit(model, 'maxPromptTokens'))"></div>
+                                        <div class="text-gray-500 text-xs">Prompt</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Capabilities Badges -->
+                            <div class="flex flex-wrap gap-1.5">
+                                <span x-show="modelSupports(model, 'toolCalls')"
+                                      class="px-2 py-0.5 text-xs bg-neon-green/10 text-neon-green rounded">
+                                    Tool Calls
+                                </span>
+                                <span x-show="modelSupports(model, 'parallelToolCalls')"
+                                      class="px-2 py-0.5 text-xs bg-emerald-500/10 text-emerald-400 rounded">
+                                    Parallel Tools
+                                </span>
+                                <span x-show="modelSupports(model, 'dimensions')"
+                                      class="px-2 py-0.5 text-xs bg-blue-500/10 text-blue-400 rounded">
+                                    Dimensions
+                                </span>
+                                <span x-show="model.modelPickerEnabled"
+                                      class="px-2 py-0.5 text-xs bg-purple-500/10 text-purple-400 rounded">
+                                    Picker Enabled
+                                </span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- No models message -->
+                <div x-show="filteredModels.length === 0 && models.length > 0" class="text-center py-12 text-gray-500">
+                    <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <p>No models found for this filter</p>
+                    <button @click="modelFilter = 'all'" class="mt-2 text-neon-purple hover:underline">Show all models</button>
+                </div>
+
+                <div x-show="models.length === 0" class="text-center py-12 text-gray-500">
+                    <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
+                    <p>No models available</p>
+                </div>
+            </div>
+            
+            <!-- Accounts View -->
+            <div x-show="activeTab === 'accounts'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">Account Pool</h1>
+                    <div class="flex gap-2">
+                        <button @click="refreshQuotas()"
+                                class="px-4 py-2 text-sm bg-neon-cyan/20 text-neon-cyan rounded-lg hover:bg-neon-cyan/30 transition-colors">
+                            Refresh Quotas
+                        </button>
+                        <button @click="refreshAccounts()"
+                                class="px-4 py-2 text-sm bg-neon-purple/20 text-neon-purple rounded-lg hover:bg-neon-purple/30 transition-colors">
+                            Refresh Tokens
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Pool Settings -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-6">
+                    <h2 class="text-lg font-semibold text-white mb-4">Pool Configuration</h2>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="flex items-center gap-3">
+                                <input type="checkbox"
+                                       x-model="accountPool.enabled"
+                                       @change="updatePoolConfig()"
+                                       class="rounded bg-space-950 border-space-border w-5 h-5 text-neon-purple focus:ring-neon-purple/50">
+                                <span class="text-white font-medium">Enable Multi-Account Pool</span>
+                            </label>
+                            <p class="text-gray-500 text-sm mt-1 ml-8">Use multiple GitHub accounts for load balancing</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Selection Strategy</label>
+                            <select x-model="accountPool.strategy"
+                                    @change="updatePoolConfig()"
+                                    class="w-full px-4 py-2.5 bg-space-950 border border-space-border rounded-lg text-white focus:ring-2 focus:ring-neon-purple/50 focus:border-neon-purple outline-none">
+                                <option value="sticky">Sticky (stay on one account)</option>
+                                <option value="round-robin">Round Robin (rotate each request)</option>
+                                <option value="hybrid">Hybrid (sticky until error, then rotate)</option>
+                                <option value="quota-based">Quota-Based (use account with highest quota)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add Account -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-6">
+                    <h2 class="text-lg font-semibold text-white mb-4">Add Account</h2>
+
+                    <!-- OAuth Flow UI -->
+                    <template x-if="!oauthFlow.active">
+                        <div>
+                            <p class="text-gray-400 text-sm mb-4">
+                                Add a new GitHub account via OAuth. This will open GitHub's authorization page.
+                            </p>
+                            <div class="flex gap-4 items-end">
+                                <div class="flex-1">
+                                    <label class="block text-sm font-medium text-gray-400 mb-2">Label (optional)</label>
+                                    <input type="text"
+                                           x-model="newAccountLabel"
+                                           placeholder="e.g., Work, Personal, School"
+                                           class="w-full px-4 py-2.5 bg-space-950 border border-space-border rounded-lg text-white focus:ring-2 focus:ring-neon-purple/50 focus:border-neon-purple outline-none">
+                                </div>
+                                <button @click="startOAuthFlow()"
+                                        class="px-6 py-2.5 bg-gradient-to-r from-neon-purple to-blue-600 text-white rounded-lg hover:opacity-90 transition-opacity font-medium flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                                    </svg>
+                                    Login with GitHub
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- OAuth Flow Progress -->
+                    <template x-if="oauthFlow.active">
+                        <div class="text-center py-6">
+                            <div class="mb-6">
+                                <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-neon-purple/20 mb-4">
+                                    <svg class="w-8 h-8 text-neon-purple animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                                    </svg>
+                                </div>
+                                <h3 class="text-xl font-semibold text-white mb-2">Enter this code on GitHub</h3>
+                                <div class="inline-flex items-center gap-2 px-6 py-3 bg-space-950 border-2 border-neon-cyan rounded-lg">
+                                    <span class="text-3xl font-mono font-bold text-neon-cyan tracking-wider" x-text="oauthFlow.userCode"></span>
+                                    <button @click="copyToClipboard(oauthFlow.userCode)"
+                                            class="p-2 text-gray-400 hover:text-neon-cyan transition-colors"
+                                            title="Copy code">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <p class="text-gray-400 mb-4">
+                                Go to <a :href="oauthFlow.verificationUri" target="_blank" class="text-neon-cyan hover:underline" x-text="oauthFlow.verificationUri"></a>
+                            </p>
+
+                            <div class="flex justify-center gap-4">
+                                <a :href="oauthFlow.verificationUri" target="_blank"
+                                   class="px-6 py-2.5 bg-gradient-to-r from-neon-cyan to-blue-500 text-white rounded-lg hover:opacity-90 transition-opacity font-medium">
+                                    Open GitHub
+                                </a>
+                                <button @click="completeOAuthFlow()"
+                                        :disabled="oauthFlow.completing"
+                                        class="px-6 py-2.5 bg-neon-green text-black rounded-lg hover:opacity-90 transition-opacity font-medium disabled:opacity-50">
+                                    <span x-show="!oauthFlow.completing">I've Entered the Code</span>
+                                    <span x-show="oauthFlow.completing" class="flex items-center gap-2">
+                                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Verifying...
+                                    </span>
+                                </button>
+                                <button @click="cancelOAuthFlow()"
+                                        class="px-6 py-2.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors font-medium">
+                                    Cancel
+                                </button>
+                            </div>
+
+                            <p class="text-gray-500 text-sm mt-4">
+                                Code expires in <span x-text="Math.floor(oauthFlow.expiresIn / 60)"></span> minutes
+                            </p>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Accounts List -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold text-white">
+                            Accounts
+                            <span class="text-sm font-normal text-gray-500">(<span x-text="accountPool.accounts.length"></span> total)</span>
+                        </h2>
+                        <div x-show="accountPool.currentAccountId" class="text-xs text-gray-500">
+                            Current: <span class="text-neon-cyan" x-text="accountPool.currentAccountId"></span>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <!-- All Accounts (no more primary distinction) -->
+                        <template x-for="account in accountPool.accounts" :key="account.id">
+                            <div class="p-4 bg-space-950 border rounded-lg transition-colors"
+                                 :class="isCurrentAccount(account.id) ? 'border-neon-purple/50' : 'border-space-border'">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold text-lg relative">
+                                            <span x-text="account.login.charAt(0).toUpperCase()"></span>
+                                            <div x-show="isCurrentAccount(account.id)"
+                                                 class="absolute -top-1 -right-1 w-4 h-4 bg-neon-green rounded-full border-2 border-space-950"
+                                                 title="Current account"></div>
+                                        </div>
+                                        <div>
+                                            <div class="font-medium text-white flex items-center gap-2">
+                                                <span x-text="account.login"></span>
+                                                <span x-show="isCurrentAccount(account.id)"
+                                                      class="px-2 py-0.5 text-xs bg-neon-purple/10 text-neon-purple rounded">Current</span>
+                                            </div>
+                                            <div class="text-xs text-gray-500 mt-1">
+                                                <span class="text-gray-400">Requests:</span> <span x-text="account.requestCount"></span>
+                                                <span class="mx-1">|</span>
+                                                <span class="text-gray-400">Errors:</span> <span :class="account.errorCount > 0 ? 'text-red-400' : ''" x-text="account.errorCount"></span>
+                                                <span class="mx-1">|</span>
+                                                <span class="text-gray-400">Last used:</span> <span x-text="formatRelativeTime(account.lastUsed)"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex items-center gap-3">
+                                        <div class="text-right">
+                                            <span class="px-2 py-1 text-xs rounded"
+                                                  :class="{
+                                                      'bg-neon-green/10 text-neon-green': account.active && !account.rateLimited && !account.paused,
+                                                      'bg-yellow-500/10 text-yellow-400': account.rateLimited && !account.paused,
+                                                      'bg-red-500/10 text-red-400': !account.active && !account.paused,
+                                                      'bg-orange-500/10 text-orange-400': account.paused && account.pausedReason === 'quota',
+                                                      'bg-gray-500/10 text-gray-400': account.paused && account.pausedReason !== 'quota'
+                                                  }"
+                                                  x-text="account.paused ? (account.pausedReason === 'quota' ? 'Low Quota' : 'Paused') : (account.active ? (account.rateLimited ? 'Rate Limited' : 'Active') : 'Inactive')">
+                                            </span>
+                                            <div x-show="account.rateLimited && account.rateLimitResetAt"
+                                                 class="text-xs text-yellow-400 mt-1"
+                                                 x-text="'Resets ' + formatResetTime(account.rateLimitResetAt)">
+                                            </div>
+                                        </div>
+                                        <button @click="togglePauseAccount(account.id, !account.paused)"
+                                                class="p-2 rounded-lg transition-colors"
+                                                :class="account.paused ? 'text-neon-green hover:bg-neon-green/10' : 'text-yellow-400 hover:bg-yellow-500/10'"
+                                                :title="account.paused ? 'Resume account' : 'Pause account'">
+                                            <svg x-show="!account.paused" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            <svg x-show="account.paused" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                        </button>
+                                        <button @click="removeAccount(account.id)"
+                                                class="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                                                title="Remove account">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Quota Display -->
+                                <div x-show="account.quota" class="mt-3 pt-3 border-t border-space-border">
+                                    <div class="grid grid-cols-3 gap-4">
+                                        <!-- Chat Quota -->
+                                        <div>
+                                            <div class="text-xs text-gray-500 mb-1">Chat</div>
+                                            <div class="flex items-center gap-2">
+                                                <div class="flex-1 h-2 bg-space-900 rounded-full overflow-hidden">
+                                                    <div class="h-full rounded-full transition-all"
+                                                         :class="{
+                                                             'bg-neon-green': account.quota?.chat?.percentRemaining > 50,
+                                                             'bg-yellow-400': account.quota?.chat?.percentRemaining <= 50 && account.quota?.chat?.percentRemaining > 20,
+                                                             'bg-red-400': account.quota?.chat?.percentRemaining <= 20
+                                                         }"
+                                                         :style="'width: ' + (account.quota?.chat?.unlimited ? 100 : (account.quota?.chat?.percentRemaining || 0)) + '%'">
+                                                    </div>
+                                                </div>
+                                                <span class="text-xs text-gray-400" x-text="account.quota?.chat?.unlimited ? '∞' : (account.quota?.chat?.percentRemaining?.toFixed(0) + '%')"></span>
+                                            </div>
+                                        </div>
+                                        <!-- Completions Quota -->
+                                        <div>
+                                            <div class="text-xs text-gray-500 mb-1">Completions</div>
+                                            <div class="flex items-center gap-2">
+                                                <div class="flex-1 h-2 bg-space-900 rounded-full overflow-hidden">
+                                                    <div class="h-full rounded-full transition-all"
+                                                         :class="{
+                                                             'bg-neon-green': account.quota?.completions?.percentRemaining > 50,
+                                                             'bg-yellow-400': account.quota?.completions?.percentRemaining <= 50 && account.quota?.completions?.percentRemaining > 20,
+                                                             'bg-red-400': account.quota?.completions?.percentRemaining <= 20
+                                                         }"
+                                                         :style="'width: ' + (account.quota?.completions?.unlimited ? 100 : (account.quota?.completions?.percentRemaining || 0)) + '%'">
+                                                    </div>
+                                                </div>
+                                                <span class="text-xs text-gray-400" x-text="account.quota?.completions?.unlimited ? '∞' : (account.quota?.completions?.percentRemaining?.toFixed(0) + '%')"></span>
+                                            </div>
+                                        </div>
+                                        <!-- Premium Quota -->
+                                        <div>
+                                            <div class="text-xs text-gray-500 mb-1">Premium</div>
+                                            <div class="flex items-center gap-2">
+                                                <div class="flex-1 h-2 bg-space-900 rounded-full overflow-hidden">
+                                                    <div class="h-full rounded-full transition-all"
+                                                         :class="{
+                                                             'bg-neon-green': account.quota?.premiumInteractions?.percentRemaining > 50,
+                                                             'bg-yellow-400': account.quota?.premiumInteractions?.percentRemaining <= 50 && account.quota?.premiumInteractions?.percentRemaining > 20,
+                                                             'bg-red-400': account.quota?.premiumInteractions?.percentRemaining <= 20
+                                                         }"
+                                                         :style="'width: ' + (account.quota?.premiumInteractions?.unlimited ? 100 : (account.quota?.premiumInteractions?.percentRemaining || 0)) + '%'">
+                                                    </div>
+                                                </div>
+                                                <span class="text-xs text-gray-400" x-text="account.quota?.premiumInteractions?.unlimited ? '∞' : (account.quota?.premiumInteractions?.percentRemaining?.toFixed(0) + '%')"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div x-show="account.quota?.resetDate" class="mt-2 text-xs text-gray-500">
+                                        Resets: <span x-text="new Date(account.quota?.resetDate).toLocaleDateString()"></span>
+                                    </div>
+                                </div>
+
+                                <!-- Error details -->
+                                <div x-show="account.lastError && !account.quota"
+                                     class="mt-3 pt-3 border-t border-space-border">
+                                    <div class="text-xs">
+                                        <span class="text-gray-500">Last error:</span>
+                                        <span class="text-red-400 ml-1" x-text="account.lastError"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="accountPool.accounts.length === 0" class="text-center py-8 text-gray-500">
+                            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                            </svg>
+                            <p>No accounts configured</p>
+                            <p class="text-sm mt-1">Add GitHub accounts above to enable multi-account support</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Logs View -->
+            <div x-show="activeTab === 'logs'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center gap-3">
+                        <h1 class="text-2xl font-bold text-white">Server Logs</h1>
+                        <span class="flex items-center gap-1.5 px-2 py-1 text-xs rounded-full"
+                              :class="logsConnected ? 'bg-neon-green/10 text-neon-green' : 'bg-red-500/10 text-red-400'">
+                            <span class="w-1.5 h-1.5 rounded-full" :class="logsConnected ? 'bg-neon-green' : 'bg-red-400'"></span>
+                            <span x-text="logsConnected ? 'Connected' : 'Disconnected'"></span>
+                        </span>
+                        <span class="text-xs text-gray-500">
+                            (<span x-text="filteredLogs.length"></span> / <span x-text="logs.length"></span> logs)
+                        </span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button @click="loadRecentLogs()"
+                                class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                                title="Reload recent logs">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                        <div class="relative" x-data="{ showExportMenu: false }">
+                            <button @click="showExportMenu = !showExportMenu"
+                                    class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                                    title="Export logs">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                            </button>
+                            <div x-show="showExportMenu" @click.away="showExportMenu = false"
+                                 class="absolute right-0 mt-2 w-40 bg-space-900 border border-space-border rounded-lg shadow-lg z-10">
+                                <button @click="exportLogs(); showExportMenu = false"
+                                        class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-space-800 hover:text-white rounded-t-lg">
+                                    Export as JSON
+                                </button>
+                                <button @click="exportLogsCSV(); showExportMenu = false"
+                                        class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-space-800 hover:text-white rounded-b-lg">
+                                    Export as CSV
+                                </button>
+                            </div>
+                        </div>
+                        <button @click="clearLogs()"
+                                class="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+                                title="Clear logs">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Logs Controls -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-4 mb-4">
+                    <div class="flex flex-wrap items-center gap-4">
+                        <!-- Search -->
+                        <div class="flex-1 min-w-[200px]">
+                            <div class="relative">
+                                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                                <input type="text"
+                                       x-model="logsSearch"
+                                       placeholder="Search logs..."
+                                       class="w-full pl-10 pr-4 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:ring-2 focus:ring-neon-purple/50 focus:border-neon-purple outline-none">
+                            </div>
+                        </div>
+
+                        <!-- Level Filter -->
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-500">Level:</span>
+                            <div class="flex gap-1">
+                                <button @click="logsFilter = 'all'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'all' ? 'bg-neon-purple text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    All
+                                </button>
+                                <button @click="logsFilter = 'info'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'info' ? 'bg-blue-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    Info
+                                </button>
+                                <button @click="logsFilter = 'warn'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'warn' ? 'bg-yellow-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    Warn
+                                </button>
+                                <button @click="logsFilter = 'error'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'error' ? 'bg-red-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    Error
+                                </button>
+                                <button @click="logsFilter = 'success'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'success' ? 'bg-green-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    Success
+                                </button>
+                                <button @click="logsFilter = 'debug'"
+                                        class="px-2.5 py-1 text-xs rounded transition-colors"
+                                        :class="logsFilter === 'debug' ? 'bg-gray-500 text-white' : 'bg-space-800 text-gray-400 hover:bg-space-700'">
+                                    Debug
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Date Range Filter -->
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-gray-500">Date:</span>
+                            <input type="datetime-local"
+                                   x-model="logsDateFrom"
+                                   class="px-2 py-1 bg-space-950 border border-space-border rounded text-white text-xs focus:border-neon-purple focus:outline-none">
+                            <span class="text-gray-500">to</span>
+                            <input type="datetime-local"
+                                   x-model="logsDateTo"
+                                   class="px-2 py-1 bg-space-950 border border-space-border rounded text-white text-xs focus:border-neon-purple focus:outline-none">
+                            <button @click="logsDateFrom = ''; logsDateTo = ''"
+                                    x-show="logsDateFrom || logsDateTo"
+                                    class="p-1 text-gray-400 hover:text-white"
+                                    title="Clear date filter">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        <!-- Pause/Resume & Auto-scroll -->
+                        <div class="flex items-center gap-3">
+                            <button @click="toggleLogsPause()"
+                                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors"
+                                    :class="logsPaused ? 'bg-neon-green/20 text-neon-green' : 'bg-yellow-500/20 text-yellow-400'">
+                                <svg x-show="!logsPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                                </svg>
+                                <svg x-show="logsPaused" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                                <span x-text="logsPaused ? 'Resume' : 'Pause'"></span>
+                            </button>
+                            <label class="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+                                <input type="checkbox" x-model="logsAutoScroll" class="rounded bg-space-900 border-space-border w-4 h-4">
+                                Auto-scroll
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Container -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-4 h-[calc(100vh-320px)] overflow-auto font-mono text-sm"
+                     x-ref="logsContainer">
+                    <template x-for="(log, index) in filteredLogs" :key="index">
+                        <div class="py-1.5 border-b border-space-border/50 last:border-0 hover:bg-white/5 px-2 -mx-2 rounded">
+                            <div class="flex items-start gap-2">
+                                <span class="text-gray-600 text-xs whitespace-nowrap" x-text="formatLogTime(log.timestamp)"></span>
+                                <span class="px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap"
+                                      :class="{
+                                          'bg-blue-500/20 text-blue-400': log.level === 'info',
+                                          'bg-yellow-500/20 text-yellow-400': log.level === 'warn',
+                                          'bg-red-500/20 text-red-400': log.level === 'error',
+                                          'bg-gray-500/20 text-gray-400': log.level === 'debug',
+                                          'bg-green-500/20 text-green-400': log.level === 'success'
+                                      }"
+                                      x-text="log.level.toUpperCase()"></span>
+                                <span class="text-gray-300 break-all" x-text="log.message"></span>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="filteredLogs.length === 0 && logs.length > 0" class="text-gray-500 text-center py-8">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <p>No logs match your filter</p>
+                        <button @click="logsFilter = 'all'; logsSearch = ''" class="mt-2 text-neon-purple hover:underline text-sm">Clear filters</button>
+                    </div>
+                    <div x-show="logs.length === 0" class="text-gray-500 text-center py-8">
+                        <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <p>No logs yet</p>
+                        <p class="text-sm mt-1">Logs will appear here in real-time</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Settings View -->
+            <div x-show="activeTab === 'settings'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">Settings</h1>
+                    <div class="flex items-center gap-2">
+                        <button @click="exportSettings()"
+                                class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                                title="Export settings">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                        </button>
+                        <label class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                               title="Import settings">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                            </svg>
+                            <input type="file" accept=".json" @change="importSettings($event)" class="hidden">
+                        </label>
+                        <button @click="fetchConfig()"
+                                class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                                title="Reload settings">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                        <button @click="resetSettings()"
+                                class="px-3 py-1.5 text-sm bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors">
+                            Reset to Defaults
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Server Info -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-6">
+                    <h2 class="text-lg font-semibold text-white mb-4">Server Information</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-space-950 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-1">Version</div>
+                            <div class="text-white font-mono" x-text="serverInfo.version || 'N/A'"></div>
+                        </div>
+                        <div class="bg-space-950 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-1">Uptime</div>
+                            <div class="text-white font-mono" x-text="formatUptime(serverInfo.uptime)"></div>
+                        </div>
+                        <div class="bg-space-950 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-1">User</div>
+                            <div class="text-white font-mono" x-text="serverInfo.user || 'N/A'"></div>
+                        </div>
+                        <div class="bg-space-950 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 mb-1">Port</div>
+                            <div class="text-white font-mono" x-text="settings.port || 4141"></div>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-4 border-t border-space-border">
+                        <div class="flex items-center justify-between">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm flex-1">
+                                <div>
+                                    <span class="text-gray-500">Config Path:</span>
+                                    <span class="text-gray-300 ml-2 font-mono text-xs break-all" x-text="serverInfo.configPath || 'N/A'"></span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-500">Claude Config:</span>
+                                    <span class="text-gray-300 ml-2 font-mono text-xs break-all" x-text="serverInfo.claudeConfigPath || 'N/A'"></span>
+                                </div>
+                            </div>
+                            <button @click="restartServer()"
+                                    class="ml-4 px-4 py-2 bg-yellow-500/10 text-yellow-400 rounded-lg hover:bg-yellow-500/20 transition-colors flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Restart Server
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Claude CLI Settings -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-6">
+                    <h2 class="text-lg font-semibold text-white mb-4">Claude CLI Configuration</h2>
+                    <p class="text-gray-500 text-sm mb-4">Configure settings for Claude Code CLI integration.</p>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Default Model (Sonnet)</label>
+                            <select x-model="settings.defaultModel"
+                                    class="w-full bg-space-950 border border-space-border rounded-lg px-4 py-2 text-white focus:border-neon-purple focus:outline-none">
+                                <template x-for="(model, index) in models" :key="index">
+                                    <option :value="model.id" x-text="model.id"></option>
+                                </template>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Small/Fast Model (Haiku)</label>
+                            <select x-model="settings.defaultSmallModel"
+                                    class="w-full bg-space-950 border border-space-border rounded-lg px-4 py-2 text-white focus:border-neon-purple focus:outline-none">
+                                <template x-for="(model, index) in models" :key="index">
+                                    <option :value="model.id" x-text="model.id"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-2">
+                        <button @click="previewClaudeConfig()"
+                                class="px-4 py-2 bg-space-800 text-gray-300 rounded-lg hover:bg-space-700 transition-colors">
+                            Preview Config
+                        </button>
+                        <button @click="applyClaudeConfig()"
+                                class="px-4 py-2 bg-neon-purple/20 text-neon-purple rounded-lg hover:bg-neon-purple/30 transition-colors">
+                            Apply to Claude CLI
+                        </button>
+                    </div>
+
+                    <!-- Claude Config Preview Modal -->
+                    <div x-show="showClaudePreview" x-cloak
+                         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+                         @click.self="showClaudePreview = false">
+                        <div class="bg-space-900 border border-space-border rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-auto">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-lg font-semibold text-white">Claude CLI Config Preview</h3>
+                                <button @click="showClaudePreview = false"
+                                        class="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <p class="text-gray-500 text-sm mb-4">This configuration will be written to <code class="text-neon-cyan">~/.claude/settings.json</code></p>
+                            <pre class="bg-space-950 rounded-lg p-4 text-sm text-gray-300 font-mono overflow-x-auto whitespace-pre-wrap" x-text="JSON.stringify(claudePreviewConfig, null, 2)"></pre>
+                            <div class="flex justify-end gap-2 mt-4">
+                                <button @click="showClaudePreview = false"
+                                        class="px-4 py-2 bg-space-800 text-gray-300 rounded-lg hover:bg-space-700 transition-colors">
+                                    Cancel
+                                </button>
+                                <button @click="applyClaudeConfig(); showClaudePreview = false"
+                                        class="px-4 py-2 bg-neon-purple/20 text-neon-purple rounded-lg hover:bg-neon-purple/30 transition-colors">
+                                    Apply Config
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Server Settings -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6 mb-6"
+                     x-effect="checkUnsavedChanges()">
+                    <h2 class="text-lg font-semibold text-white mb-4">Server Configuration</h2>
+
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between py-3 border-b border-space-border">
+                            <div>
+                                <div class="font-medium text-white">Debug Mode</div>
+                                <div class="text-sm text-gray-500">Enable verbose logging</div>
+                            </div>
+                            <input type="checkbox" x-model="settings.debug"
+                                   class="w-5 h-5 rounded bg-space-950 border-space-border text-neon-purple focus:ring-neon-purple">
+                        </div>
+
+                        <div class="flex items-center justify-between py-3 border-b border-space-border">
+                            <div>
+                                <div class="font-medium text-white">Track Usage</div>
+                                <div class="text-sm text-gray-500">Record API usage statistics</div>
+                            </div>
+                            <input type="checkbox" x-model="settings.trackUsage"
+                                   class="w-5 h-5 rounded bg-space-950 border-space-border text-neon-purple focus:ring-neon-purple">
+                        </div>
+
+                        <div class="flex items-center justify-between py-3 border-b border-space-border">
+                            <div>
+                                <div class="font-medium text-white">Model Fallback</div>
+                                <div class="text-sm text-gray-500">Auto-fallback when model unavailable</div>
+                            </div>
+                            <input type="checkbox" x-model="settings.fallbackEnabled"
+                                   class="w-5 h-5 rounded bg-space-950 border-space-border text-neon-purple focus:ring-neon-purple">
+                        </div>
+
+                        <!-- Notifications -->
+                        <div class="py-3 border-b border-space-border">
+                            <div class="mb-3">
+                                <div class="font-medium text-white">Notifications</div>
+                                <div class="text-sm text-gray-500">Alert settings for important events</div>
+                            </div>
+                            <div class="space-y-2">
+                                <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                                    <input type="checkbox" x-model="notificationSettings.rateLimitAlerts"
+                                           class="w-4 h-4 rounded bg-space-950 border-space-border text-neon-purple">
+                                    Rate limit alerts
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                                    <input type="checkbox" x-model="notificationSettings.accountErrorAlerts"
+                                           class="w-4 h-4 rounded bg-space-950 border-space-border text-neon-purple">
+                                    Account error alerts
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                                    <input type="checkbox" x-model="notificationSettings.soundEnabled"
+                                           class="w-4 h-4 rounded bg-space-950 border-space-border text-neon-purple">
+                                    Sound notifications
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Rate Limiting -->
+                        <div class="py-3 border-b border-space-border">
+                            <div class="flex items-center justify-between mb-3">
+                                <div>
+                                    <div class="font-medium text-white">Rate Limiting</div>
+                                    <div class="text-sm text-gray-500">Limit requests per second (leave empty or 0 to disable)</div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">Seconds between requests</label>
+                                    <input type="number"
+                                           x-model.number="settings.rateLimitSeconds"
+                                           @input="validateRateLimit()"
+                                           placeholder="e.g., 5"
+                                           min="0"
+                                           max="3600"
+                                           step="1"
+                                           class="w-full px-4 py-2 bg-space-950 border rounded-lg text-white focus:border-neon-purple focus:outline-none"
+                                           :class="rateLimitError ? 'border-red-500' : 'border-space-border'">
+                                    <p x-show="rateLimitError" class="text-xs text-red-400 mt-1" x-text="rateLimitError"></p>
+                                </div>
+                                <div class="flex items-end">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                                        <input type="checkbox" x-model="settings.rateLimitWait"
+                                               class="w-4 h-4 rounded bg-space-950 border-space-border text-neon-purple">
+                                        Wait instead of error when rate limited
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- WebUI Password -->
+                        <div class="py-3 border-b border-space-border">
+                            <div class="mb-3">
+                                <div class="font-medium text-white">WebUI Password</div>
+                                <div class="text-sm text-gray-500">
+                                    <template x-if="settings.webuiPasswordSet">
+                                        <span class="text-neon-green">Password is set</span>
+                                    </template>
+                                    <template x-if="!settings.webuiPasswordSet">
+                                        <span>No password configured (open access)</span>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="flex gap-2">
+                                <div class="relative flex-1">
+                                    <input :type="showPassword ? 'text' : 'password'"
+                                           x-model="newWebuiPassword"
+                                           placeholder="Enter new password (leave empty to remove)"
+                                           class="w-full px-4 py-2 pr-10 bg-space-950 border border-space-border rounded-lg text-white focus:border-neon-purple focus:outline-none">
+                                    <button type="button" @click="showPassword = !showPassword"
+                                            class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors">
+                                        <svg x-show="!showPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                        <svg x-show="showPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <button @click="updateWebuiPassword()"
+                                        class="px-4 py-2 bg-neon-purple/20 text-neon-purple rounded-lg hover:bg-neon-purple/30 transition-colors">
+                                    Update
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-4">
+                            <button @click="saveSettings()"
+                                    :disabled="rateLimitError"
+                                    class="px-4 py-2 bg-neon-green/20 text-neon-green rounded-lg hover:bg-neon-green/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                                <span>Save Settings</span>
+                                <span x-show="hasUnsavedChanges" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+                            </button>
+                            <span x-show="hasUnsavedChanges" class="text-yellow-400 text-sm flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                Unsaved changes
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Model Mapping -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-6" x-show="settings.fallbackEnabled">
+                    <h2 class="text-lg font-semibold text-white mb-4">Model Mapping</h2>
+                    <p class="text-gray-500 text-sm mb-4">Configure custom model fallback mappings. When a requested model is not available, it will be mapped to the specified target model.</p>
+
+                    <!-- Existing Mappings -->
+                    <div class="space-y-2 mb-4" x-show="Object.keys(settings.modelMapping || {}).length > 0">
+                        <template x-for="(target, source) in settings.modelMapping" :key="source">
+                            <div class="flex items-center gap-3 p-3 bg-space-950 rounded-lg">
+                                <span class="text-white font-mono text-sm" x-text="source"></span>
+                                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                </svg>
+                                <span class="text-neon-cyan font-mono text-sm" x-text="target"></span>
+                                <button @click="removeModelMapping(source)"
+                                        class="ml-auto p-1 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div x-show="Object.keys(settings.modelMapping || {}).length === 0" class="text-gray-500 text-sm mb-4">
+                        No custom mappings configured. Add mappings below.
+                    </div>
+
+                    <!-- Add New Mapping -->
+                    <div class="flex flex-wrap gap-2 items-end">
+                        <div class="flex-1 min-w-[150px] relative">
+                            <label class="block text-xs text-gray-500 mb-1">Source Model</label>
+                            <input type="text"
+                                   x-model="newMappingFrom"
+                                   @input="filterModelSuggestions()"
+                                   @focus="showModelSuggestions = true"
+                                   @blur="setTimeout(() => showModelSuggestions = false, 200)"
+                                   placeholder="e.g., claude-3-opus"
+                                   autocomplete="off"
+                                   class="w-full px-3 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:border-neon-purple focus:outline-none">
+                            <!-- Autocomplete dropdown -->
+                            <div x-show="showModelSuggestions && modelSuggestions.length > 0"
+                                 class="absolute z-10 w-full mt-1 bg-space-900 border border-space-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                <template x-for="suggestion in modelSuggestions" :key="suggestion">
+                                    <button @mousedown.prevent="selectModelSuggestion(suggestion)"
+                                            class="w-full px-3 py-2 text-left text-sm text-gray-300 hover:bg-space-800 hover:text-white transition-colors"
+                                            x-text="suggestion">
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="flex-1 min-w-[150px]">
+                            <label class="block text-xs text-gray-500 mb-1">Target Model</label>
+                            <select x-model="newMappingTo"
+                                    class="w-full px-3 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:border-neon-purple focus:outline-none">
+                                <option value="">Select model...</option>
+                                <template x-for="(model, index) in models" :key="index">
+                                    <option :value="model.id" x-text="model.id"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <button @click="addModelMapping()"
+                                class="px-4 py-2 bg-neon-purple/20 text-neon-purple rounded-lg hover:bg-neon-purple/30 transition-colors text-sm">
+                            Add Mapping
+                        </button>
+                    </div>
+
+                    <p class="text-xs text-gray-600 mt-3">Note: Remember to click "Save Settings" to apply changes.</p>
+                </div>
+            </div>
+
+            <!-- Request History View -->
+            <div x-show="activeTab === 'history'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">Request History</h1>
+                    <div class="flex gap-2">
+                        <button @click="fetchRequestHistory()"
+                                class="px-4 py-2 text-sm bg-neon-cyan/20 text-neon-cyan rounded-lg hover:bg-neon-cyan/30 transition-colors">
+                            Refresh
+                        </button>
+                        <button @click="clearRequestHistory()"
+                                class="px-4 py-2 text-sm bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors">
+                            Clear History
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-space-900 border border-space-border rounded-xl p-4">
+                        <div class="text-gray-500 text-sm">Total Requests</div>
+                        <div class="text-2xl font-bold text-white" x-text="historyStats.total || 0"></div>
+                    </div>
+                    <div class="bg-space-900 border border-space-border rounded-xl p-4">
+                        <div class="text-gray-500 text-sm">Success Rate</div>
+                        <div class="text-2xl font-bold text-neon-green" x-text="((historyStats.byStatus?.success || 0) / Math.max(historyStats.total, 1) * 100).toFixed(1) + '%'"></div>
+                    </div>
+                    <div class="bg-space-900 border border-space-border rounded-xl p-4">
+                        <div class="text-gray-500 text-sm">Cache Hit Rate</div>
+                        <div class="text-2xl font-bold text-neon-cyan" x-text="((historyStats.cacheHitRate || 0) * 100).toFixed(1) + '%'"></div>
+                    </div>
+                    <div class="bg-space-900 border border-space-border rounded-xl p-4">
+                        <div class="text-gray-500 text-sm">Total Cost</div>
+                        <div class="text-2xl font-bold text-neon-purple" x-text="'$' + (historyStats.totalCost || 0).toFixed(4)"></div>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="bg-space-900 border border-space-border rounded-xl p-4 mb-4">
+                    <div class="flex flex-wrap gap-4 items-center">
+                        <div class="flex-1 min-w-[150px]">
+                            <label class="block text-xs text-gray-500 mb-1">Model</label>
+                            <input type="text" x-model="historyFilter.model" @input="fetchRequestHistory()"
+                                   placeholder="Filter by model..."
+                                   class="w-full px-3 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:border-neon-purple focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Status</label>
+                            <select x-model="historyFilter.status" @change="fetchRequestHistory()"
+                                    class="px-3 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:border-neon-purple focus:outline-none">
+                                <option value="">All</option>
+                                <option value="success">Success</option>
+                                <option value="error">Error</option>
+                                <option value="cached">Cached</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Account</label>
+                            <select x-model="historyFilter.accountId" @change="fetchRequestHistory()"
+                                    class="px-3 py-2 bg-space-950 border border-space-border rounded-lg text-white text-sm focus:border-neon-purple focus:outline-none">
+                                <option value="">All Accounts</option>
+                                <template x-for="account in accountPool.accounts" :key="account.id">
+                                    <option :value="account.id" x-text="account.login"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- History Table -->
+                <div class="bg-space-900 border border-space-border rounded-xl overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-space-950">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tokens</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-space-border">
+                                <template x-for="entry in requestHistoryEntries" :key="entry.id">
+                                    <tr class="hover:bg-space-800/50">
+                                        <td class="px-4 py-3 text-sm text-gray-400 whitespace-nowrap" x-text="new Date(entry.timestamp).toLocaleString()"></td>
+                                        <td class="px-4 py-3 text-sm">
+                                            <span class="px-2 py-0.5 text-xs rounded"
+                                                  :class="{
+                                                      'bg-blue-500/10 text-blue-400': entry.type === 'chat',
+                                                      'bg-purple-500/10 text-purple-400': entry.type === 'message',
+                                                      'bg-cyan-500/10 text-cyan-400': entry.type === 'embedding'
+                                                  }"
+                                                  x-text="entry.type"></span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-white font-mono" x-text="entry.model"></td>
+                                        <td class="px-4 py-3 text-sm text-gray-400" x-text="entry.accountId || '-'"></td>
+                                        <td class="px-4 py-3 text-sm text-gray-400">
+                                            <span x-text="entry.tokens.input"></span> / <span x-text="entry.tokens.output"></span>
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-neon-purple" x-text="'$' + entry.cost.toFixed(6)"></td>
+                                        <td class="px-4 py-3 text-sm text-gray-400" x-text="entry.duration + 'ms'"></td>
+                                        <td class="px-4 py-3 text-sm">
+                                            <span class="px-2 py-0.5 text-xs rounded"
+                                                  :class="{
+                                                      'bg-green-500/10 text-green-400': entry.status === 'success',
+                                                      'bg-red-500/10 text-red-400': entry.status === 'error',
+                                                      'bg-cyan-500/10 text-cyan-400': entry.status === 'cached'
+                                                  }"
+                                                  x-text="entry.status"></span>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="requestHistoryEntries.length === 0">
+                                    <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                                        No request history yet
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="px-4 py-3 bg-space-950 flex items-center justify-between">
+                        <div class="text-sm text-gray-500">
+                            Showing <span x-text="historyOffset + 1"></span>-<span x-text="Math.min(historyOffset + requestHistoryEntries.length, historyTotal)"></span> of <span x-text="historyTotal"></span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="historyOffset = Math.max(0, historyOffset - 50); fetchRequestHistory()"
+                                    :disabled="historyOffset === 0"
+                                    class="px-3 py-1 text-sm bg-space-800 text-gray-400 rounded hover:bg-space-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Previous
+                            </button>
+                            <button @click="historyOffset += 50; fetchRequestHistory()"
+                                    :disabled="!historyHasMore"
+                                    class="px-3 py-1 text-sm bg-space-800 text-gray-400 rounded hover:bg-space-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Playground View -->
+            <div x-show="activeTab === 'playground'" x-cloak>
+                <div class="flex items-center justify-between mb-6">
+                    <h1 class="text-2xl font-bold text-white">API Playground</h1>
+                    <div class="flex gap-2">
+                        <button @click="copyAsCurl()"
+                                class="px-4 py-2 text-sm bg-space-800 text-gray-400 rounded-lg hover:bg-space-700 transition-colors">
+                            Copy as cURL
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Request Panel -->
+                    <div class="space-y-4">
+                        <div class="bg-space-900 border border-space-border rounded-xl p-6">
+                            <h2 class="text-lg font-semibold text-white mb-4">Request</h2>
+
+                            <div class="space-y-4">
+                                <!-- Endpoint -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-400 mb-2">Endpoint</label>
+                                    <select x-model="playground.endpoint"
+                                            class="w-full px-4 py-2 bg-space-950 border border-space-border rounded-lg text-white focus:border-neon-purple focus:outline-none">
+                                        <option value="/v1/chat/completions">OpenAI - /v1/chat/completions</option>
+                                        <option value="/v1/messages">Anthropic - /v1/messages</option>
+                                    </select>
+                                </div>
+
+                                <!-- Model -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-400 mb-2">Model</label>
+                                    <select x-model="playground.model"
+                                            @change="updatePlaygroundRequest()"
+                                            x-html="models.map(m => `<option value='${m.id}' ${m.id === playground.model ? 'selected' : ''}>${m.id}</option>`).join('')"
+                                            class="w-full px-4 py-2 bg-space-950 border border-space-border rounded-lg text-white focus:border-neon-purple focus:outline-none">
+                                    </select>
+                                </div>
+
+                                <!-- Stream Toggle -->
+                                <div class="flex items-center gap-3">
+                                    <label class="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
+                                        <input type="checkbox" x-model="playground.stream" @change="updatePlaygroundRequest()"
+                                               class="w-4 h-4 rounded bg-space-950 border-space-border text-neon-purple">
+                                        Stream response
+                                    </label>
+                                </div>
+
+                                <!-- Request Body -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-400 mb-2">Request Body (JSON)</label>
+                                    <textarea x-model="playground.request"
+                                              rows="12"
+                                              class="w-full px-4 py-3 bg-space-950 border border-space-border rounded-lg text-white font-mono text-sm focus:border-neon-purple focus:outline-none resize-none"
+                                              :class="playground.error && playground.error.includes('JSON') ? 'border-red-500' : ''"></textarea>
+                                    <p x-show="playground.error && playground.error.includes('JSON')"
+                                       class="text-xs text-red-400 mt-1" x-text="playground.error"></p>
+                                </div>
+
+                                <!-- Presets -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-400 mb-2">Templates</label>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button @click="loadPlaygroundPreset('simple')"
+                                                class="px-3 py-1 text-xs bg-space-800 text-gray-400 rounded hover:bg-space-700">
+                                            Simple Chat
+                                        </button>
+                                        <button @click="loadPlaygroundPreset('system')"
+                                                class="px-3 py-1 text-xs bg-space-800 text-gray-400 rounded hover:bg-space-700">
+                                            With System
+                                        </button>
+                                        <button @click="loadPlaygroundPreset('tools')"
+                                                class="px-3 py-1 text-xs bg-space-800 text-gray-400 rounded hover:bg-space-700">
+                                            With Tools
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Send Button -->
+                                <button @click="sendPlaygroundRequest()"
+                                        :disabled="playground.loading"
+                                        class="w-full py-3 bg-gradient-to-r from-neon-purple to-blue-600 text-white rounded-lg hover:opacity-90 disabled:opacity-50 font-medium flex items-center justify-center gap-2">
+                                    <svg x-show="playground.loading" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span x-text="playground.loading ? 'Sending...' : 'Send Request'"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Response Panel -->
+                    <div class="space-y-4">
+                        <div class="bg-space-900 border border-space-border rounded-xl p-6 h-full">
+                            <div class="flex items-center justify-between mb-4">
+                                <h2 class="text-lg font-semibold text-white">Response</h2>
+                                <div class="flex items-center gap-4 text-sm">
+                                    <span x-show="playground.duration" class="text-gray-500">
+                                        <span x-text="playground.duration"></span>ms
+                                    </span>
+                                    <button @click="playground.response = ''; playground.error = ''"
+                                            class="text-gray-400 hover:text-white transition-colors">
+                                        Clear
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Response Content -->
+                            <div class="bg-space-950 rounded-lg p-4 h-[calc(100%-60px)] overflow-auto">
+                                <template x-if="playground.error && !playground.error.includes('JSON')">
+                                    <div class="text-red-400 font-mono text-sm whitespace-pre-wrap" x-text="playground.error"></div>
+                                </template>
+                                <template x-if="!playground.error && playground.response">
+                                    <pre class="text-gray-300 font-mono text-sm whitespace-pre-wrap" x-text="typeof playground.response === 'string' ? playground.response : JSON.stringify(playground.response, null, 2)"></pre>
+                                </template>
+                                <template x-if="!playground.error && !playground.response">
+                                    <div class="text-gray-500 text-center py-12">
+                                        <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                        </svg>
+                                        <p>Send a request to see the response</p>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </main>
+    </div>
+
+    <!-- App Script -->
+    <script src="/js/app.js"></script>
+</body>
+</html>

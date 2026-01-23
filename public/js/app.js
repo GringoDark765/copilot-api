@@ -1,0 +1,1640 @@
+/**
+ * Copilot API Console - Alpine.js Application
+ */
+
+document.addEventListener("alpine:init", () => {
+  Alpine.data("app", () => ({
+    // State
+    activeTab: "dashboard",
+    loading: false,
+
+    // Authentication
+    auth: {
+      authenticated: false,
+      passwordRequired: false,
+      password: "",
+      checking: true,
+    },
+
+    // Toast
+    toast: {
+      show: false,
+      message: "",
+      type: "info",
+    },
+
+    // Server status
+    status: {
+      connected: false,
+      version: null,
+      uptime: 0,
+      user: null,
+      accountType: null,
+      modelsCount: 0,
+    },
+
+    // Models
+    models: [],
+    modelFilter: 'all',
+
+    // Usage stats
+    usageStats: {
+      totalRequests: 0,
+      byModel: {},
+      byHour: [],
+    },
+
+    // Copilot usage/quota
+    copilotUsage: {
+      access_type_sku: null,
+      copilot_plan: null,
+      quota_reset_date: null,
+      chat_enabled: null,
+      assigned_date: null,
+      quota_snapshots: null,
+    },
+
+    // Logs
+    logs: [],
+    logsAutoScroll: true,
+    logsEventSource: null,
+    logsFilter: "all", // all, info, warn, error, debug, success
+    logsSearch: "",
+    logsPaused: false,
+    logsConnected: false,
+
+    // Settings
+    settings: {
+      port: 4141,
+      debug: false,
+      trackUsage: true,
+      fallbackEnabled: false,
+      rateLimitSeconds: null,
+      rateLimitWait: false,
+      modelMapping: {},
+      defaultModel: "gpt-4.1",
+      defaultSmallModel: "gpt-4.1",
+      webuiPasswordSet: false,
+      poolEnabled: false,
+      poolStrategy: "sticky",
+      configPath: "",
+    },
+
+    // Server info
+    serverInfo: {
+      version: null,
+      uptime: 0,
+      user: null,
+      configPath: "",
+      claudeConfigPath: "",
+    },
+
+    // New password field
+    newWebuiPassword: "",
+    showPassword: false,
+
+    // Settings change tracking
+    originalSettings: null,
+    hasUnsavedChanges: false,
+
+    // Model mapping editor
+    newMappingFrom: "",
+    newMappingTo: "",
+    modelSuggestions: [],
+    showModelSuggestions: false,
+
+    // Logs date filter
+    logsDateFrom: "",
+    logsDateTo: "",
+
+    // Claude CLI preview
+    showClaudePreview: false,
+    claudePreviewConfig: null,
+
+    // Notifications
+    notifications: [],
+    notificationSettings: {
+      rateLimitAlerts: true,
+      accountErrorAlerts: true,
+      soundEnabled: false,
+    },
+
+    // Rate limit validation
+    rateLimitError: "",
+
+    // Account pool
+    accountPool: {
+      enabled: false,
+      strategy: "sticky",
+      accounts: [],
+      currentAccountId: null,
+    },
+    newAccountLabel: "",
+
+    // OAuth flow state
+    oauthFlow: {
+      active: false,
+      flowId: null,
+      userCode: "",
+      verificationUri: "",
+      expiresIn: 0,
+      completing: false,
+    },
+
+    // Chart instance
+    usageChart: null,
+
+    // Request history
+    requestHistoryEntries: [],
+    historyStats: {},
+    historyFilter: {
+      model: "",
+      status: "",
+      accountId: "",
+    },
+    historyOffset: 0,
+    historyTotal: 0,
+    historyHasMore: false,
+
+    // API Playground
+    playground: {
+      endpoint: "/v1/chat/completions",
+      model: "gpt-4.1",
+      request: JSON.stringify({
+        model: "gpt-4.1",
+        messages: [{ role: "user", content: "Hello!" }],
+        stream: false,
+      }, null, 2),
+      response: "",
+      loading: false,
+      stream: false,
+      error: null,
+      duration: 0,
+    },
+
+    // Initialize
+    async init() {
+      await this.checkAuth()
+
+      if (this.auth.authenticated || !this.auth.passwordRequired) {
+        await this.fetchData()
+        await this.loadRecentLogs()
+        this.connectLogStream()
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+          if (
+            !this.loading
+            && (this.auth.authenticated || !this.auth.passwordRequired)
+          ) {
+            this.fetchStatus()
+            this.fetchUsageStats()
+            this.fetchCopilotUsage()
+          }
+        }, 30000)
+      }
+    },
+
+    // Check authentication status
+    async checkAuth() {
+      this.auth.checking = true
+      try {
+        const response = await fetch("/api/auth-status")
+        const data = await response.json()
+        this.auth.authenticated = data.authenticated
+        this.auth.passwordRequired = data.passwordRequired
+      } catch (error) {
+        console.error("Auth check failed:", error)
+        this.auth.authenticated = false
+        this.auth.passwordRequired = true
+      } finally {
+        this.auth.checking = false
+      }
+    },
+
+    // Login
+    async login() {
+      this.loading = true
+      try {
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: this.auth.password }),
+        })
+        const data = await response.json()
+
+        if (data.status === "ok") {
+          this.auth.authenticated = true
+          this.auth.password = ""
+          this.showToast("Login successful", "success")
+          await this.fetchData()
+          this.connectLogStream()
+        } else {
+          this.showToast(data.error || "Login failed", "error")
+        }
+      } catch {
+        this.showToast("Login failed", "error")
+      } finally {
+        this.loading = false
+      }
+    },
+
+    // Logout
+    async logout() {
+      try {
+        await fetch("/api/logout", { method: "POST" })
+        this.auth.authenticated = false
+        if (this.logsEventSource) {
+          this.logsEventSource.close()
+          this.logsEventSource = null
+        }
+        this.showToast("Logged out", "info")
+      } catch (error) {
+        console.error("Logout failed:", error)
+      }
+    },
+
+    // Fetch all data
+    async fetchData() {
+      this.loading = true
+      try {
+        await Promise.all([
+          this.fetchStatus(),
+          this.fetchModels(),
+          this.fetchUsageStats(),
+          this.fetchCopilotUsage(),
+          this.fetchConfig(),
+          this.fetchAccounts(),
+        ])
+        this.status.connected = true
+      } catch (error) {
+        console.error("Failed to fetch data:", error)
+        this.status.connected = false
+        this.showToast("Failed to connect to server", "error")
+      } finally {
+        this.loading = false
+      }
+    },
+
+    // Restart server
+    async restartServer() {
+      if (!confirm("Are you sure you want to restart the server? This will temporarily interrupt service.")) {
+        return
+      }
+
+      try {
+        const response = await fetch("/api/server/restart", {
+          method: "POST",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.showToast("Server is restarting...", "warning")
+          this.status.connected = false
+
+          // Try to reconnect after a delay
+          setTimeout(async () => {
+            let retries = 0
+            const maxRetries = 30
+            const checkConnection = async () => {
+              try {
+                const resp = await fetch("/api/status")
+                if (resp.ok) {
+                  this.showToast("Server restarted successfully!", "success")
+                  this.status.connected = true
+                  await this.fetchData()
+                  return true
+                }
+              } catch {
+                // Server not ready yet
+              }
+              retries++
+              if (retries < maxRetries) {
+                setTimeout(checkConnection, 2000)
+              } else {
+                this.showToast("Server restart taking longer than expected. Please refresh the page.", "error")
+              }
+              return false
+            }
+            checkConnection()
+          }, 2000)
+        }
+      } catch (error) {
+        this.showToast("Failed to restart server: " + error.message, "error")
+      }
+    },
+
+    // Fetch server status
+    async fetchStatus() {
+      try {
+        const response = await fetch("/api/status")
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.status = { ...this.status, ...data, connected: true }
+          // Also update serverInfo from status
+          this.serverInfo.version = data.version || this.serverInfo.version
+          this.serverInfo.uptime = data.uptime || this.serverInfo.uptime
+          this.serverInfo.user = data.user || this.serverInfo.user
+          this.serverInfo.configPath = data.configPath || this.serverInfo.configPath
+          this.serverInfo.claudeConfigPath = data.claudeConfigPath || this.serverInfo.claudeConfigPath
+        }
+      } catch {
+        this.status.connected = false
+      }
+    },
+
+    // Fetch models
+    async fetchModels() {
+      try {
+        const response = await fetch("/api/models")
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.models = data.models
+
+          // Set default model if not set
+          if (this.models.length > 0 && !this.settings.defaultModel) {
+            this.settings.defaultModel = this.models[0].id
+            this.settings.defaultSmallModel = this.models[0].id
+          }
+
+          // Sync playground model with available models
+          if (this.models.length > 0) {
+            const modelExists = this.models.some(m => m.id === this.playground.model)
+            if (!modelExists) {
+              this.playground.model = this.models[0].id
+              this.updatePlaygroundRequest()
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch models:", error)
+      }
+    },
+
+    // Fetch usage statistics
+    async fetchUsageStats() {
+      try {
+        const response = await fetch("/api/usage-stats?period=24h")
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.usageStats = data.stats
+          this.updateChart()
+        }
+      } catch (error) {
+        console.error("Failed to fetch usage stats:", error)
+      }
+    },
+
+    // Fetch Copilot usage/quota
+    async fetchCopilotUsage() {
+      try {
+        const response = await fetch("/api/copilot-usage")
+        const data = await response.json()
+        if (data.status === "ok" && data.usage) {
+          this.copilotUsage = {
+            access_type_sku: data.usage.access_type_sku,
+            copilot_plan: data.usage.copilot_plan,
+            quota_reset_date: data.usage.quota_reset_date,
+            chat_enabled: data.usage.chat_enabled,
+            assigned_date: data.usage.assigned_date,
+            quota_snapshots: data.usage.quota_snapshots || null,
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch Copilot usage:", error)
+      }
+    },
+
+    // Fetch configuration
+    async fetchConfig() {
+      try {
+        const response = await fetch("/api/config")
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.settings = { ...this.settings, ...data.config }
+          if (data.serverInfo) {
+            this.serverInfo = { ...this.serverInfo, ...data.serverInfo }
+          }
+          // Store original settings for change detection
+          this.originalSettings = JSON.stringify({
+            debug: this.settings.debug,
+            trackUsage: this.settings.trackUsage,
+            fallbackEnabled: this.settings.fallbackEnabled,
+            rateLimitSeconds: this.settings.rateLimitSeconds,
+            rateLimitWait: this.settings.rateLimitWait,
+            modelMapping: this.settings.modelMapping,
+            defaultModel: this.settings.defaultModel,
+            defaultSmallModel: this.settings.defaultSmallModel,
+          })
+          this.hasUnsavedChanges = false
+        }
+      } catch (error) {
+        console.error("Failed to fetch config:", error)
+      }
+    },
+
+    // Fetch accounts
+    async fetchAccounts() {
+      try {
+        const response = await fetch("/api/accounts")
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.accountPool = {
+            enabled: data.poolEnabled,
+            strategy: data.strategy,
+            accounts: data.accounts,
+            currentAccountId: data.currentAccountId,
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch accounts:", error)
+      }
+    },
+
+    // Start OAuth flow for adding account
+    async startOAuthFlow() {
+      try {
+        const response = await fetch("/api/accounts/oauth/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            label: this.newAccountLabel || undefined,
+          }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.oauthFlow = {
+            active: true,
+            flowId: data.flowId,
+            userCode: data.userCode,
+            verificationUri: data.verificationUri,
+            expiresIn: data.expiresIn,
+            completing: false,
+          }
+          this.showToast("Enter the code on GitHub to authorize", "info")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to start OAuth: " + error.message, "error")
+      }
+    },
+
+    // Complete OAuth flow
+    async completeOAuthFlow() {
+      this.oauthFlow.completing = true
+      try {
+        const response = await fetch("/api/accounts/oauth/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            flowId: this.oauthFlow.flowId,
+          }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.resetOAuthFlow()
+          this.newAccountLabel = ""
+          await this.fetchAccounts()
+          this.showToast(`Account ${data.account.login} added successfully!`, "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.oauthFlow.completing = false
+        this.showToast("Failed to complete OAuth: " + error.message, "error")
+      }
+    },
+
+    // Cancel OAuth flow
+    async cancelOAuthFlow() {
+      try {
+        await fetch("/api/accounts/oauth/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ flowId: this.oauthFlow.flowId }),
+        })
+      } catch {
+        // Ignore errors
+      }
+      this.resetOAuthFlow()
+    },
+
+    // Reset OAuth flow state
+    resetOAuthFlow() {
+      this.oauthFlow = {
+        active: false,
+        flowId: null,
+        userCode: "",
+        verificationUri: "",
+        expiresIn: 0,
+        completing: false,
+      }
+    },
+
+    // Remove account from pool
+    async removeAccount(id) {
+      if (!confirm(`Remove account ${id}?`)) return
+
+      try {
+        const response = await fetch(`/api/accounts/${id}`, {
+          method: "DELETE",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          await this.fetchAccounts()
+          this.showToast(`Account ${id} removed`, "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to remove account: " + error.message, "error")
+      }
+    },
+
+    // Toggle account pause state
+    async togglePauseAccount(id, paused) {
+      try {
+        const response = await fetch(`/api/accounts/${id}/pause`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paused }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          await this.fetchAccounts()
+          this.showToast(`Account ${id} ${paused ? "paused" : "resumed"}`, "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to toggle account: " + error.message, "error")
+      }
+    },
+
+    // Refresh all account tokens
+    async refreshAccounts() {
+      try {
+        const response = await fetch("/api/accounts/refresh", {
+          method: "POST",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.accountPool.accounts = data.accounts
+          this.accountPool.currentAccountId = data.currentAccountId
+          this.showToast("Tokens refreshed", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to refresh tokens: " + error.message, "error")
+      }
+    },
+
+    // Refresh all account quotas
+    async refreshQuotas() {
+      try {
+        const response = await fetch("/api/accounts/refresh-quotas", {
+          method: "POST",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.accountPool.accounts = data.accounts
+          this.showToast("Quotas refreshed for all accounts", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to refresh quotas: " + error.message, "error")
+      }
+    },
+
+    // Fetch accounts quota (for Usage tab)
+    async fetchAccountsQuota() {
+      try {
+        // First refresh quotas
+        const response = await fetch("/api/accounts/refresh-quotas", {
+          method: "POST",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.accountPool.accounts = data.accounts
+        }
+      } catch (error) {
+        console.error("Failed to fetch accounts quota:", error)
+      }
+    },
+
+    // Update pool configuration
+    async updatePoolConfig() {
+      try {
+        const response = await fetch("/api/pool-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled: this.accountPool.enabled,
+            strategy: this.accountPool.strategy,
+          }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.showToast("Pool configuration updated", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to update pool config: " + error.message, "error")
+      }
+    },
+
+    // Save settings
+    async saveSettings() {
+      try {
+        const response = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            debug: this.settings.debug,
+            trackUsage: this.settings.trackUsage,
+            fallbackEnabled: this.settings.fallbackEnabled,
+            rateLimitSeconds: this.settings.rateLimitSeconds || undefined,
+            rateLimitWait: this.settings.rateLimitWait,
+            modelMapping: this.settings.modelMapping,
+            defaultModel: this.settings.defaultModel,
+            defaultSmallModel: this.settings.defaultSmallModel,
+          }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.showToast("Settings saved successfully", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to save settings: " + error.message, "error")
+      }
+    },
+
+    // Add model mapping
+    addModelMapping() {
+      if (!this.newMappingFrom || !this.newMappingTo) {
+        this.showToast("Please enter both source and target model", "error")
+        return
+      }
+      this.settings.modelMapping = {
+        ...this.settings.modelMapping,
+        [this.newMappingFrom]: this.newMappingTo,
+      }
+      this.newMappingFrom = ""
+      this.newMappingTo = ""
+      this.showModelSuggestions = false
+      this.showToast("Model mapping added (save to apply)", "info")
+    },
+
+    // Filter model suggestions for autocomplete
+    filterModelSuggestions() {
+      const query = this.newMappingFrom.toLowerCase().trim()
+      if (!query) {
+        this.modelSuggestions = this.models.map((m) => m.id).slice(0, 10)
+        return
+      }
+      // Common model name patterns to suggest
+      const commonPatterns = [
+        "claude-3-opus", "claude-3-sonnet", "claude-3-haiku",
+        "claude-3.5-sonnet", "claude-3.5-haiku",
+        "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini",
+        "gpt-3.5-turbo", "o1-preview", "o1-mini",
+        "gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash",
+      ]
+      // Combine with actual models
+      const allModels = [...new Set([...commonPatterns, ...this.models.map((m) => m.id)])]
+      this.modelSuggestions = allModels
+        .filter((m) => m.toLowerCase().includes(query))
+        .slice(0, 10)
+    },
+
+    // Select model suggestion
+    selectModelSuggestion(model) {
+      this.newMappingFrom = model
+      this.showModelSuggestions = false
+    },
+
+    // Remove model mapping
+    removeModelMapping(from) {
+      const { [from]: _, ...rest } = this.settings.modelMapping
+      this.settings.modelMapping = rest
+      this.showToast("Model mapping removed (save to apply)", "info")
+    },
+
+    // Validate rate limit input
+    validateRateLimit() {
+      const value = this.settings.rateLimitSeconds
+      if (value === null || value === "" || value === undefined) {
+        this.rateLimitError = ""
+        return true
+      }
+      if (value < 0) {
+        this.rateLimitError = "Rate limit cannot be negative"
+        return false
+      }
+      if (value > 3600) {
+        this.rateLimitError = "Rate limit cannot exceed 3600 seconds (1 hour)"
+        return false
+      }
+      if (!Number.isInteger(value)) {
+        this.rateLimitError = "Rate limit must be a whole number"
+        return false
+      }
+      this.rateLimitError = ""
+      return true
+    },
+
+    // Check for unsaved changes
+    checkUnsavedChanges() {
+      if (!this.originalSettings) return false
+      const currentSettings = JSON.stringify({
+        debug: this.settings.debug,
+        trackUsage: this.settings.trackUsage,
+        fallbackEnabled: this.settings.fallbackEnabled,
+        rateLimitSeconds: this.settings.rateLimitSeconds,
+        rateLimitWait: this.settings.rateLimitWait,
+        modelMapping: this.settings.modelMapping,
+        defaultModel: this.settings.defaultModel,
+        defaultSmallModel: this.settings.defaultSmallModel,
+      })
+      this.hasUnsavedChanges = currentSettings !== this.originalSettings
+      return this.hasUnsavedChanges
+    },
+
+    // Reset settings to defaults
+    async resetSettings() {
+      if (!confirm("Are you sure you want to reset all settings to defaults?")) return
+      try {
+        const response = await fetch("/api/config/reset", {
+          method: "POST",
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          await this.fetchConfig()
+          this.showToast("Settings reset to defaults", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to reset settings: " + error.message, "error")
+      }
+    },
+
+    // Export settings as JSON file
+    exportSettings() {
+      const exportData = {
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        settings: {
+          debug: this.settings.debug,
+          trackUsage: this.settings.trackUsage,
+          fallbackEnabled: this.settings.fallbackEnabled,
+          rateLimitSeconds: this.settings.rateLimitSeconds,
+          rateLimitWait: this.settings.rateLimitWait,
+          modelMapping: this.settings.modelMapping,
+          defaultModel: this.settings.defaultModel,
+          defaultSmallModel: this.settings.defaultSmallModel,
+        },
+      }
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `copilot-api-settings-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      this.showToast("Settings exported successfully", "success")
+    },
+
+    // Import settings from JSON file
+    async importSettings(event) {
+      const file = event.target.files[0]
+      if (!file) return
+
+      try {
+        const text = await file.text()
+        const data = JSON.parse(text)
+
+        if (!data.settings) {
+          throw new Error("Invalid settings file format")
+        }
+
+        // Confirm import
+        if (!confirm("This will overwrite your current settings. Continue?")) {
+          event.target.value = ""
+          return
+        }
+
+        // Apply imported settings
+        const importedSettings = data.settings
+        this.settings = {
+          ...this.settings,
+          debug: importedSettings.debug ?? this.settings.debug,
+          trackUsage: importedSettings.trackUsage ?? this.settings.trackUsage,
+          fallbackEnabled: importedSettings.fallbackEnabled ?? this.settings.fallbackEnabled,
+          rateLimitSeconds: importedSettings.rateLimitSeconds ?? this.settings.rateLimitSeconds,
+          rateLimitWait: importedSettings.rateLimitWait ?? this.settings.rateLimitWait,
+          modelMapping: importedSettings.modelMapping ?? this.settings.modelMapping,
+          defaultModel: importedSettings.defaultModel ?? this.settings.defaultModel,
+          defaultSmallModel: importedSettings.defaultSmallModel ?? this.settings.defaultSmallModel,
+        }
+
+        // Save to server
+        await this.saveSettings()
+        this.showToast("Settings imported successfully", "success")
+      } catch (error) {
+        this.showToast("Failed to import settings: " + error.message, "error")
+      }
+
+      // Reset file input
+      event.target.value = ""
+    },
+
+    // Update WebUI password
+    async updateWebuiPassword() {
+      try {
+        const newPassword = this.newWebuiPassword
+        const response = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ webuiPassword: newPassword }),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.newWebuiPassword = ""
+          this.settings.webuiPasswordSet = Boolean(newPassword)
+
+          // Re-check auth status after password change
+          await this.checkAuth()
+
+          if (newPassword) {
+            this.showToast(
+              "Password updated. You may need to re-login.",
+              "success",
+            )
+          } else {
+            this.showToast("Password removed. WebUI is now open.", "info")
+          }
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast("Failed to update password: " + error.message, "error")
+      }
+    },
+
+    // Preview Claude CLI config
+    previewClaudeConfig() {
+      this.claudePreviewConfig = {
+        env: {
+          ANTHROPIC_BASE_URL: globalThis.location.origin,
+          ANTHROPIC_AUTH_TOKEN: "dummy",
+          ANTHROPIC_MODEL: this.settings.defaultModel,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: this.settings.defaultModel,
+          ANTHROPIC_SMALL_FAST_MODEL: this.settings.defaultSmallModel,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: this.settings.defaultSmallModel,
+          DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        },
+        permissions: {
+          deny: ["WebSearch"],
+        },
+      }
+      this.showClaudePreview = true
+    },
+
+    // Apply Claude CLI config
+    async applyClaudeConfig() {
+      try {
+        const config = {
+          env: {
+            ANTHROPIC_BASE_URL: globalThis.location.origin,
+            ANTHROPIC_AUTH_TOKEN: "dummy",
+            ANTHROPIC_MODEL: this.settings.defaultModel,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: this.settings.defaultModel,
+            ANTHROPIC_SMALL_FAST_MODEL: this.settings.defaultSmallModel,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: this.settings.defaultSmallModel,
+            DISABLE_NON_ESSENTIAL_MODEL_CALLS: "1",
+            CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+          },
+          permissions: {
+            deny: ["WebSearch"],
+          },
+        }
+
+        const response = await fetch("/api/claude-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.showToast("Claude CLI config updated!", "success")
+        } else {
+          throw new Error(data.error)
+        }
+      } catch (error) {
+        this.showToast(
+          "Failed to update Claude config: " + error.message,
+          "error",
+        )
+      }
+    },
+
+    // Connect to log stream
+    connectLogStream() {
+      if (this.logsEventSource) {
+        this.logsEventSource.close()
+      }
+
+      this.logsEventSource = new EventSource("/api/logs/stream")
+      this.logsConnected = false
+
+      this.logsEventSource.addEventListener("log", (event) => {
+        // Skip if paused
+        if (this.logsPaused) return
+
+        const log = JSON.parse(event.data)
+        this.logs.push(log)
+
+        // Keep only last 500 logs
+        if (this.logs.length > 500) {
+          this.logs = this.logs.slice(-500)
+        }
+
+        // Auto-scroll
+        if (this.logsAutoScroll && this.$refs.logsContainer) {
+          this.$nextTick(() => {
+            this.$refs.logsContainer.scrollTop =
+              this.$refs.logsContainer.scrollHeight
+          })
+        }
+
+        // Check for alerts in log message
+        this.checkLogForAlerts(log)
+      })
+
+      this.logsEventSource.addEventListener("connected", () => {
+        console.log("Log stream connected")
+        this.logsConnected = true
+      })
+
+      this.logsEventSource.onerror = () => {
+        console.error("Log stream error, reconnecting...")
+        this.logsConnected = false
+        setTimeout(() => this.connectLogStream(), 5000)
+      }
+    },
+
+    // Check log for alert conditions
+    checkLogForAlerts(log) {
+      if (!log) return
+
+      const message = (log.message || "").toLowerCase()
+
+      // Check for rate limit alerts
+      if (this.notificationSettings.rateLimitAlerts) {
+        if (message.includes("rate limit") || message.includes("ratelimit") || message.includes("429")) {
+          this.addNotification({
+            type: "warning",
+            title: "Rate Limit Warning",
+            message: log.message,
+          })
+        }
+      }
+
+      // Check for account error alerts
+      if (this.notificationSettings.accountErrorAlerts) {
+        if (message.includes("account") && (message.includes("error") || message.includes("failed") || message.includes("deactivat"))) {
+          this.addNotification({
+            type: "error",
+            title: "Account Error",
+            message: log.message,
+          })
+        }
+      }
+    },
+
+    // Add notification
+    addNotification(notification) {
+      const id = Date.now() + Math.random()
+      this.notifications.push({
+        id,
+        ...notification,
+        timestamp: Date.now(),
+      })
+
+      // Keep only last 5 notifications
+      if (this.notifications.length > 5) {
+        this.notifications = this.notifications.slice(-5)
+      }
+
+      // Play sound if enabled
+      if (this.notificationSettings.soundEnabled) {
+        this.playNotificationSound()
+      }
+    },
+
+    // Dismiss notification
+    dismissNotification(id) {
+      this.notifications = this.notifications.filter((n) => n.id !== id)
+    },
+
+    // Play notification sound
+    playNotificationSound() {
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+        const oscillator = audioContext.createOscillator()
+        const gainNode = audioContext.createGain()
+        oscillator.connect(gainNode)
+        gainNode.connect(audioContext.destination)
+        oscillator.frequency.value = 440
+        oscillator.type = "sine"
+        gainNode.gain.value = 0.1
+        oscillator.start()
+        oscillator.stop(audioContext.currentTime + 0.1)
+      } catch {
+        // Ignore audio errors
+      }
+    },
+
+    // Load recent logs from server
+    async loadRecentLogs() {
+      try {
+        const response = await fetch("/api/logs/recent?limit=100")
+        const data = await response.json()
+        if (data.status === "ok" && data.logs) {
+          this.logs = data.logs
+        }
+      } catch (error) {
+        console.error("Failed to load recent logs:", error)
+      }
+    },
+
+    // Toggle pause
+    toggleLogsPause() {
+      this.logsPaused = !this.logsPaused
+      if (!this.logsPaused) {
+        this.showToast("Log streaming resumed", "info")
+      } else {
+        this.showToast("Log streaming paused", "info")
+      }
+    },
+
+    // Clear logs
+    clearLogs() {
+      this.logs = []
+    },
+
+    // Export logs as JSON
+    exportLogs() {
+      const logsToExport = this.filteredLogs
+      const blob = new Blob([JSON.stringify(logsToExport, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `copilot-api-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      this.showToast(`Exported ${logsToExport.length} logs`, "success")
+    },
+
+    // Export logs as CSV
+    exportLogsCSV() {
+      const logsToExport = this.filteredLogs
+      // CSV header
+      const header = "Timestamp,Level,Message\n"
+      // CSV rows
+      const rows = logsToExport.map((log) => {
+        const timestamp = new Date(log.timestamp).toISOString()
+        const level = log.level
+        // Escape quotes in message and wrap in quotes
+        const message = `"${(log.message || "").replace(/"/g, '""')}"`
+        return `${timestamp},${level},${message}`
+      }).join("\n")
+
+      const csv = header + rows
+      const blob = new Blob([csv], { type: "text/csv" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `copilot-api-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.csv`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      this.showToast(`Exported ${logsToExport.length} logs as CSV`, "success")
+    },
+
+    // Get filtered logs
+    get filteredLogs() {
+      let filtered = this.logs
+
+      // Filter by level
+      if (this.logsFilter !== "all") {
+        filtered = filtered.filter((log) => log.level === this.logsFilter)
+      }
+
+      // Filter by search
+      if (this.logsSearch.trim()) {
+        const search = this.logsSearch.toLowerCase()
+        filtered = filtered.filter(
+          (log) =>
+            log.message.toLowerCase().includes(search) ||
+            log.level.toLowerCase().includes(search)
+        )
+      }
+
+      // Filter by date range
+      if (this.logsDateFrom) {
+        const fromDate = new Date(this.logsDateFrom).getTime()
+        filtered = filtered.filter((log) => new Date(log.timestamp).getTime() >= fromDate)
+      }
+      if (this.logsDateTo) {
+        const toDate = new Date(this.logsDateTo).getTime()
+        filtered = filtered.filter((log) => new Date(log.timestamp).getTime() <= toDate)
+      }
+
+      return filtered
+    },
+
+    // Update usage chart
+    updateChart() {
+      const ctx = document.querySelector("#usageChart")
+      if (!ctx) return
+
+      const labels = Object.keys(this.usageStats.byModel || {})
+      const data = Object.values(this.usageStats.byModel || {})
+
+      if (this.usageChart) {
+        this.usageChart.destroy()
+      }
+
+      this.usageChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Requests",
+              data: data,
+              backgroundColor: "rgba(168, 85, 247, 0.5)",
+              borderColor: "rgba(168, 85, 247, 1)",
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false,
+            },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: {
+                color: "rgba(255, 255, 255, 0.1)",
+              },
+              ticks: {
+                color: "rgba(255, 255, 255, 0.5)",
+              },
+            },
+            x: {
+              grid: {
+                display: false,
+              },
+              ticks: {
+                color: "rgba(255, 255, 255, 0.5)",
+                maxRotation: 45,
+              },
+            },
+          },
+        },
+      })
+    },
+
+    // Show toast notification
+    showToast(message, type = "info") {
+      this.toast = { show: true, message, type }
+      setTimeout(() => {
+        this.toast.show = false
+      }, 3000)
+    },
+
+    // Format uptime
+    formatUptime(seconds) {
+      if (!seconds) return "0s"
+
+      const days = Math.floor(seconds / 86400)
+      const hours = Math.floor((seconds % 86400) / 3600)
+      const minutes = Math.floor((seconds % 3600) / 60)
+
+      if (days > 0) return `${days}d ${hours}h`
+      if (hours > 0) return `${hours}h ${minutes}m`
+      return `${minutes}m`
+    },
+
+    // Get filtered models based on filter
+    get filteredModels() {
+      if (this.modelFilter === "all") return this.models
+
+      return this.models.filter((model) => {
+        const id = model.id.toLowerCase()
+        const vendor = (model.vendor || "").toLowerCase()
+
+        switch (this.modelFilter) {
+          case "openai":
+            return (
+              vendor.includes("openai")
+              || id.includes("gpt")
+              || id.includes("o1")
+              || id.includes("o3")
+              || id.includes("o4")
+            )
+          case "anthropic":
+            return vendor.includes("anthropic") || id.includes("claude")
+          case "google":
+            return (
+              vendor.includes("google") || id.includes("gemini")
+            )
+          case "other":
+            return (
+              !vendor.includes("openai")
+              && !vendor.includes("anthropic")
+              && !vendor.includes("google")
+              && !id.includes("gpt")
+              && !id.includes("o1")
+              && !id.includes("o3")
+              && !id.includes("o4")
+              && !id.includes("claude")
+              && !id.includes("gemini")
+            )
+          default:
+            return true
+        }
+      })
+    },
+
+    // Get model token limit (handles both flat and nested structure)
+    getModelLimit(model, limitName) {
+      const caps = model.capabilities
+      if (!caps) return null
+      // Try nested structure first (limits.maxContextTokens)
+      if (caps.limits && caps.limits[limitName] !== undefined) {
+        return caps.limits[limitName]
+      }
+      // Fallback to flat structure (maxContextTokens directly on capabilities)
+      if (caps[limitName] !== undefined) {
+        return caps[limitName]
+      }
+      return null
+    },
+
+    // Check if model supports a capability (handles both flat and nested structure)
+    modelSupports(model, capability) {
+      const caps = model.capabilities
+      if (!caps) return false
+      // Try nested structure first (supports.toolCalls)
+      if (caps.supports && caps.supports[capability] !== undefined) {
+        return caps.supports[capability]
+      }
+      // Fallback to flat structure (supportsToolCalls directly on capabilities)
+      const flatName = "supports" + capability.charAt(0).toUpperCase() + capability.slice(1)
+      if (caps[flatName] !== undefined) {
+        return caps[flatName]
+      }
+      return false
+    },
+
+    // Format number
+    formatNumber(num) {
+      if (!num) return "N/A"
+      if (num >= 1000000) return (num / 1000000).toFixed(1) + "M"
+      if (num >= 1000) return (num / 1000).toFixed(1) + "K"
+      return num.toString()
+    },
+
+    // Get quota color class based on percentage
+    getQuotaColor(snapshot) {
+      if (!snapshot || snapshot.unlimited) return "text-emerald-400"
+      const percent = snapshot.percent_remaining || 0
+      if (percent > 50) return "text-emerald-400"
+      if (percent > 20) return "text-yellow-400"
+      return "text-red-400"
+    },
+
+    // Get quota bar color based on percentage
+    getQuotaBarColor(snapshot) {
+      if (!snapshot || snapshot.unlimited) return "bg-emerald-500"
+      const percent = snapshot.percent_remaining || 0
+      if (percent > 50) return "bg-emerald-500"
+      if (percent > 20) return "bg-yellow-500"
+      return "bg-red-500"
+    },
+
+    // Format quota display text
+    formatQuota(snapshot) {
+      if (!snapshot) return "N/A"
+      if (snapshot.unlimited) return "Unlimited"
+      return `${snapshot.remaining ?? 0} / ${snapshot.limit ?? 0}`
+    },
+
+    // Format date for display
+    formatDate(dateStr) {
+      if (!dateStr) return "N/A"
+      const date = new Date(dateStr)
+      return date.toLocaleDateString()
+    },
+
+    // Format access type for display
+    formatAccessType(accessType) {
+      if (!accessType) return "N/A"
+      return accessType.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())
+    },
+
+    // Format log timestamp
+    formatLogTime(timestamp) {
+      if (!timestamp) return ""
+      const date = new Date(timestamp)
+      return date.toLocaleTimeString()
+    },
+
+    // Format relative time (e.g., "2 minutes ago")
+    formatRelativeTime(timestamp) {
+      if (!timestamp) return "Never"
+      const now = Date.now()
+      const diff = now - timestamp
+      const seconds = Math.floor(diff / 1000)
+      const minutes = Math.floor(seconds / 60)
+      const hours = Math.floor(minutes / 60)
+      const days = Math.floor(hours / 24)
+
+      if (days > 0) return `${days}d ago`
+      if (hours > 0) return `${hours}h ago`
+      if (minutes > 0) return `${minutes}m ago`
+      if (seconds > 10) return `${seconds}s ago`
+      return "Just now"
+    },
+
+    // Format timestamp for rate limit reset
+    formatResetTime(timestamp) {
+      if (!timestamp) return "N/A"
+      const date = new Date(timestamp)
+      const now = Date.now()
+      if (timestamp <= now) return "Now"
+      const diff = timestamp - now
+      const minutes = Math.ceil(diff / 60000)
+      if (minutes < 60) return `in ${minutes}m`
+      const hours = Math.ceil(minutes / 60)
+      return `in ${hours}h`
+    },
+
+    // Copy text to clipboard
+    async copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text)
+        this.showToast("Copied to clipboard!", "success")
+      } catch (error) {
+        console.error("Failed to copy:", error)
+        this.showToast("Failed to copy", "error")
+      }
+    },
+
+    // Check if account is current (being used)
+    isCurrentAccount(accountId) {
+      return this.accountPool.currentAccountId === accountId
+    },
+
+    // ==========================================
+    // Request History Functions
+    // ==========================================
+
+    // Fetch request history
+    async fetchRequestHistory() {
+      try {
+        const params = new URLSearchParams({
+          limit: "50",
+          offset: this.historyOffset.toString(),
+        })
+        if (this.historyFilter.model) params.set("model", this.historyFilter.model)
+        if (this.historyFilter.status) params.set("status", this.historyFilter.status)
+        if (this.historyFilter.accountId) params.set("account", this.historyFilter.accountId)
+
+        const response = await fetch(`/api/history?${params}`)
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.requestHistoryEntries = data.entries || []
+          this.historyTotal = data.total || 0
+          this.historyHasMore = data.hasMore || false
+        }
+
+        // Also fetch stats
+        const statsResponse = await fetch("/api/history/stats")
+        const statsData = await statsResponse.json()
+        if (statsData.status === "ok") {
+          this.historyStats = statsData.stats || {}
+        }
+      } catch (error) {
+        console.error("Failed to fetch request history:", error)
+      }
+    },
+
+    // Clear request history
+    async clearRequestHistory() {
+      if (!confirm("Are you sure you want to clear all request history?")) return
+      try {
+        const response = await fetch("/api/history", { method: "DELETE" })
+        const data = await response.json()
+        if (data.status === "ok") {
+          this.requestHistoryEntries = []
+          this.historyStats = {}
+          this.historyTotal = 0
+          this.showToast("Request history cleared", "success")
+        }
+      } catch (error) {
+        this.showToast("Failed to clear history: " + error.message, "error")
+      }
+    },
+
+    // ==========================================
+    // API Playground Functions
+    // ==========================================
+
+    // Update playground request when model or stream changes
+    updatePlaygroundRequest() {
+      try {
+        const current = JSON.parse(this.playground.request)
+        current.model = this.playground.model
+        current.stream = this.playground.stream
+        this.playground.request = JSON.stringify(current, null, 2)
+        this.playground.error = null
+      } catch {
+        // Ignore parse errors
+      }
+    },
+
+    // Load a preset template
+    loadPlaygroundPreset(preset) {
+      const presets = {
+        simple: {
+          model: this.playground.model,
+          messages: [
+            { role: "user", content: "Hello! What can you help me with?" }
+          ],
+          stream: this.playground.stream,
+        },
+        system: {
+          model: this.playground.model,
+          messages: [
+            { role: "system", content: "You are a helpful assistant." },
+            { role: "user", content: "Hello! What can you help me with?" }
+          ],
+          stream: this.playground.stream,
+        },
+        tools: {
+          model: this.playground.model,
+          messages: [
+            { role: "user", content: "What's the weather in San Francisco?" }
+          ],
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "get_weather",
+                description: "Get the current weather for a location",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    location: {
+                      type: "string",
+                      description: "City name"
+                    }
+                  },
+                  required: ["location"]
+                }
+              }
+            }
+          ],
+          stream: this.playground.stream,
+        },
+      }
+      this.playground.request = JSON.stringify(presets[preset] || presets.simple, null, 2)
+      this.playground.error = null
+    },
+
+    // Send playground request
+    async sendPlaygroundRequest() {
+      this.playground.loading = true
+      this.playground.error = null
+      this.playground.response = ""
+      this.playground.duration = 0
+
+      const startTime = Date.now()
+
+      try {
+        // Validate JSON
+        let body
+        try {
+          body = JSON.parse(this.playground.request)
+        } catch (e) {
+          this.playground.error = "Invalid JSON: " + e.message
+          return
+        }
+
+        const response = await fetch(this.playground.endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        })
+
+        this.playground.duration = Date.now() - startTime
+
+        if (body.stream) {
+          // Handle streaming response
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ""
+
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split("\n")
+            buffer = lines.pop() || ""
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const data = line.slice(6)
+                if (data === "[DONE]") continue
+                try {
+                  const parsed = JSON.parse(data)
+                  // Extract content from streaming chunk
+                  if (parsed.choices?.[0]?.delta?.content) {
+                    this.playground.response += parsed.choices[0].delta.content
+                  }
+                } catch {
+                  // Ignore parse errors for SSE
+                }
+              }
+            }
+          }
+        } else {
+          // Handle non-streaming response
+          const data = await response.json()
+          this.playground.response = data
+        }
+      } catch (error) {
+        this.playground.error = "Request failed: " + error.message
+      } finally {
+        this.playground.loading = false
+        this.playground.duration = Date.now() - startTime
+      }
+    },
+
+    // Copy request as cURL
+    async copyAsCurl() {
+      try {
+        const body = JSON.parse(this.playground.request)
+        const curl = `curl -X POST '${window.location.origin}${this.playground.endpoint}' \\
+  -H 'Content-Type: application/json' \\
+  -d '${JSON.stringify(body)}'`
+        await navigator.clipboard.writeText(curl)
+        this.showToast("cURL command copied to clipboard!", "success")
+      } catch (error) {
+        this.showToast("Failed to copy: " + error.message, "error")
+      }
+    },
+
+    // ==========================================
+    // Account Health Helper
+    // ==========================================
+
+    // Get account status color for health indicator
+    getAccountStatusColor(account) {
+      if (account.paused) return "gray"
+      if (!account.active) return "red"
+      const quota = account.quota?.chat?.percentRemaining || 0
+      if (quota < 5) return "red"
+      if (quota < 20) return "yellow"
+      return "green"
+    },
+  }))
+})
