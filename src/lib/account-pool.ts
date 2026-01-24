@@ -918,6 +918,24 @@ export async function checkMonthlyReset(): Promise<void> {
   await checkMonthlyResetInternal(poolState, refreshAllQuotas, savePoolState)
 }
 
+export async function setCurrentAccount(
+  accountId: string,
+): Promise<{ success: boolean; account?: AccountStatus }> {
+  const account = poolState.accounts.find((a) => a.id === accountId)
+
+  if (!account) {
+    return { success: false }
+  }
+
+  // Set this account as the sticky and last selected account
+  poolState.stickyAccountId = accountId
+  poolState.lastSelectedId = accountId
+
+  await savePoolState()
+
+  return { success: true, account }
+}
+
 function selectByQuota(activeAccounts: Array<AccountStatus>): AccountStatus {
   // Sort by effective quota percentage (descending)
   const sorted = [...activeAccounts].sort((a, b) => {
