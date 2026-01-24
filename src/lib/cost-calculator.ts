@@ -8,6 +8,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
+import { getConfig } from "./config"
 // Model pricing (per 1M tokens in USD)
 export interface ModelPricing {
   model: string
@@ -353,6 +354,19 @@ export function recordCost(
   inputTokens: number,
   outputTokens: number,
 ): CostEstimate {
+  const config = getConfig()
+  if (!config.trackCost) {
+    return {
+      model,
+      inputTokens,
+      outputTokens,
+      inputCost: 0,
+      outputCost: 0,
+      totalCost: 0,
+      currency: "USD",
+    }
+  }
+
   const estimate = calculateCost(model, inputTokens, outputTokens)
 
   costHistory.push({
