@@ -77,6 +77,7 @@ export function generateCacheKey(
     temperature?: number
     max_tokens?: number
     tools?: Array<unknown>
+    accountId?: string
   },
 ): string {
   // Normalize messages (sort keys, remove undefined values)
@@ -93,6 +94,7 @@ export function generateCacheKey(
     messages: normalizedMessages,
     temperature: options?.temperature,
     max_tokens: options?.max_tokens,
+    accountId: options?.accountId,
     // Include tools in hash if present
     tools: options?.tools ? JSON.stringify(options.tools) : undefined,
   }
