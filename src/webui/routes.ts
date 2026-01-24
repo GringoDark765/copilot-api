@@ -203,6 +203,20 @@ function applyRuntimeConfig(config: ReturnType<typeof getConfig>): void {
   state.rateLimitWait = config.rateLimitWait
 }
 
+function sanitizeConfigUpdates(
+  updates: Partial<ReturnType<typeof getPublicConfig>>,
+): Partial<ReturnType<typeof getPublicConfig>> {
+  const allowedKeys = new Set(
+    Object.keys(getPublicConfig()).filter((k) => k !== "webuiPasswordSet"),
+  )
+  const sanitized: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(updates)) {
+    if (!allowedKeys.has(key)) continue
+    sanitized[key] = value
+  }
+  return sanitized as Partial<ReturnType<typeof getPublicConfig>>
+}
+
 /**
  * GET /api/status - Get server status and basic info
  */
@@ -371,7 +385,8 @@ webuiRoutes.post("/api/config", async (c) => {
   try {
     const updates =
       await c.req.json<Partial<ReturnType<typeof getPublicConfig>>>()
-    await saveConfig(updates)
+    const sanitized = sanitizeConfigUpdates(updates)
+    await saveConfig(sanitized)
     applyRuntimeConfig(getConfig())
     return c.json({
       status: "ok",
