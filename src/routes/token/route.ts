@@ -1,11 +1,16 @@
 import { Hono } from "hono"
 
+import { getConfig } from "~/lib/config"
 import { state } from "~/lib/state"
 
 export const tokenRoute = new Hono()
 
 tokenRoute.get("/", (c) => {
   try {
+    const config = getConfig()
+    if (config.webuiPassword) {
+      return c.json({ error: "Token endpoint disabled" }, 403)
+    }
     return c.json({
       token: state.copilotToken,
     })

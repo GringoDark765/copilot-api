@@ -16,8 +16,14 @@ export async function pollAccessToken(
   // I'm also adding another second, just to be safe
   const sleepDuration = (deviceCode.interval + 1) * 1000
   consola.debug(`Polling access token with interval of ${sleepDuration}ms`)
+  const startedAt = Date.now()
+  const expiresAt = startedAt + deviceCode.expires_in * 1000
 
   while (true) {
+    if (Date.now() > expiresAt) {
+      throw new Error("Device code expired")
+    }
+
     const response = await fetch(
       `${GITHUB_BASE_URL}/login/oauth/access_token`,
       {
