@@ -940,6 +940,14 @@
                                                  x-text="'Resets ' + formatResetTime(account.rateLimitResetAt)">
                                             </div>
                                         </div>
+                                        <button x-show="!isCurrentAccount(account.id)"
+                                                @click="setCurrentAccount(account.id)"
+                                                class="p-2 text-neon-purple hover:text-neon-purple/80 hover:bg-neon-purple/10 rounded-lg transition-colors"
+                                                title="Set as current account">
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                        </button>
                                         <button @click="togglePauseAccount(account.id, !account.paused)"
                                                 class="p-2 rounded-lg transition-colors"
                                                 :class="account.paused ? 'text-neon-green hover:bg-neon-green/10' : 'text-yellow-400 hover:bg-yellow-500/10'"
