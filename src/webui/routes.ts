@@ -276,9 +276,17 @@ webuiRoutes.get("/api/models", async (c) => {
     return c.json({ status: "error", error: "Models not loaded" }, 503)
   }
 
+  // Dedupe models by id
+  const seenIds = new Set<string>()
+  const uniqueModels = state.models.data.filter((model) => {
+    if (!model.id || seenIds.has(model.id)) return false
+    seenIds.add(model.id)
+    return true
+  })
+
   return c.json({
     status: "ok",
-    models: state.models.data.map((model) => {
+    models: uniqueModels.map((model) => {
       const caps = model.capabilities
       return {
         id: model.id,
