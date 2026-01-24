@@ -1406,13 +1406,42 @@ document.addEventListener("alpine:init", () => {
 
     // Copy text to clipboard
     async copyToClipboard(text) {
+      const normalizedText = String(text ?? "")
       try {
-        await navigator.clipboard.writeText(text)
-        this.showToast("Copied to clipboard!", "success")
+        if (window.isSecureContext && navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(normalizedText)
+          this.showToast("Copied to clipboard!", "success")
+          return
+        }
       } catch (error) {
-        console.error("Failed to copy:", error)
-        this.showToast("Failed to copy", "error")
+        console.error("Clipboard API failed:", error)
       }
+
+      try {
+        const textarea = document.createElement("textarea")
+        textarea.value = normalizedText
+        textarea.setAttribute("readonly", "")
+        textarea.style.position = "fixed"
+        textarea.style.top = "-9999px"
+        textarea.style.left = "-9999px"
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        textarea.setSelectionRange(0, normalizedText.length)
+        const ok = document.execCommand("copy")
+        document.body.removeChild(textarea)
+        if (ok) {
+          this.showToast("Copied to clipboard!", "success")
+          return
+        }
+      } catch (error) {
+        console.error("Fallback copy failed:", error)
+      }
+
+      this.showToast(
+        "Copy failed. Please copy manually from the code field.",
+        "error",
+      )
     },
 
     // Check if account is current (being used)
