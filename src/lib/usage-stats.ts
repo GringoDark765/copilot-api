@@ -8,6 +8,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
+import { getConfig } from "./config"
 // Storage path
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const HISTORY_FILE = path.join(CONFIG_DIR, "usage-history.json")
@@ -123,6 +124,9 @@ function prune(): void {
  * Record a request
  */
 function recordRequest(model: string): void {
+  const config = getConfig()
+  if (!config.trackUsage) return
+
   const hourKey = getCurrentHourKey()
 
   // Ensure hour entry exists
