@@ -72,7 +72,6 @@ export async function checkVersion(): Promise<VersionCheckResult> {
       updateCommand,
       message: error instanceof Error ? error.message : "Version check failed.",
     }
-    setCachedResult(result, now)
     return result
   }
 }

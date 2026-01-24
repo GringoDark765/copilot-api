@@ -241,22 +241,16 @@ document.addEventListener("alpine:init", () => {
           }
         } else {
           this.versionCheck = {
+            ...this.versionCheck,
             checking: false,
-            blocked: true,
-            local: null,
-            remote: null,
             message: data.message || "Version check failed.",
-            updateCommand: "git pull origin main",
           }
         }
       } catch (error) {
         this.versionCheck = {
+          ...this.versionCheck,
           checking: false,
-          blocked: true,
-          local: null,
-          remote: null,
           message: error.message || "Version check failed.",
-          updateCommand: "git pull origin main",
         }
       }
     },
