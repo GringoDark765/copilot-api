@@ -36,6 +36,8 @@ import {
   getConfigFile,
 } from "~/lib/config"
 import { logEmitter } from "~/lib/logger"
+import { requestCache } from "~/lib/request-cache"
+import { updateQueueConfig } from "~/lib/request-queue"
 import { state } from "~/lib/state"
 import { usageStats } from "~/lib/usage-stats"
 import { getDeviceCode } from "~/services/github/get-device-code"
@@ -184,6 +186,22 @@ webuiRoutes.route("/api/cost", costRoutes)
 // ==========================================
 // Dashboard API (Protected)
 // ==========================================
+
+function applyRuntimeConfig(config: ReturnType<typeof getConfig>): void {
+  updateQueueConfig({
+    enabled: config.queueEnabled,
+    maxConcurrent: config.queueMaxConcurrent,
+    maxSize: config.queueMaxSize,
+    timeout: config.queueTimeout,
+  })
+  requestCache.updateConfig({
+    enabled: config.cacheEnabled,
+    maxSize: config.cacheMaxSize,
+    ttlSeconds: config.cacheTtlSeconds,
+  })
+  state.rateLimitSeconds = config.rateLimitSeconds
+  state.rateLimitWait = config.rateLimitWait
+}
 
 /**
  * GET /api/status - Get server status and basic info
@@ -354,6 +372,7 @@ webuiRoutes.post("/api/config", async (c) => {
     const updates =
       await c.req.json<Partial<ReturnType<typeof getPublicConfig>>>()
     await saveConfig(updates)
+    applyRuntimeConfig(getConfig())
     return c.json({
       status: "ok",
       message: "Configuration updated",
@@ -378,6 +397,7 @@ webuiRoutes.post("/api/config/reset", async (c) => {
       defaultModel: "gpt-4.1",
       defaultSmallModel: "gpt-4.1",
     })
+    applyRuntimeConfig(getConfig())
     return c.json({
       status: "ok",
       message: "Configuration reset to defaults",
