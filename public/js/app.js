@@ -59,6 +59,7 @@ document.addEventListener("alpine:init", () => {
     logsAutoScroll: true,
     logsEventSource: null,
     logsFilter: "all", // all, info, warn, error, debug, success
+    logsErrorsOnly: false,
     logsSearch: "",
     logsPaused: false,
     logsConnected: false,
@@ -180,6 +181,8 @@ document.addEventListener("alpine:init", () => {
       stream: false,
       error: null,
       duration: 0,
+      statusCode: null,
+      statusText: "",
     },
 
     // Initialize
@@ -1250,8 +1253,12 @@ document.addEventListener("alpine:init", () => {
     get filteredLogs() {
       let filtered = this.logs
 
+      if (this.logsErrorsOnly) {
+        filtered = filtered.filter((log) => log.level === "error")
+      }
+
       // Filter by level
-      if (this.logsFilter !== "all") {
+      if (!this.logsErrorsOnly && this.logsFilter !== "all") {
         filtered = filtered.filter((log) => log.level === this.logsFilter)
       }
 
@@ -1462,6 +1469,22 @@ document.addEventListener("alpine:init", () => {
       return `${snapshot.remaining ?? 0} / ${snapshot.limit ?? 0}`
     },
 
+    getAccountQuotaPercent(account) {
+      if (account?.quota?.chat?.unlimited) return "Unlimited"
+      const percent = account?.quota?.chat?.percentRemaining
+      if (percent === null || percent === undefined) return "N/A"
+      return `${Math.round(percent)}%`
+    },
+
+    getAccountQuotaClass(account) {
+      if (account?.quota?.chat?.unlimited) return "text-emerald-400"
+      const percent = account?.quota?.chat?.percentRemaining
+      if (percent === null || percent === undefined) return "text-gray-400"
+      if (percent > 50) return "text-emerald-400"
+      if (percent > 20) return "text-yellow-400"
+      return "text-red-400"
+    },
+
     // Format date for display
     formatDate(dateStr) {
       if (!dateStr) return "N/A"
@@ -1516,6 +1539,14 @@ document.addEventListener("alpine:init", () => {
       return `in ${hours}h`
     },
 
+    getHttpStatusClass(statusCode) {
+      if (!statusCode) return "bg-space-800 text-gray-400"
+      if (statusCode >= 200 && statusCode < 300) return "bg-neon-green/20 text-neon-green"
+      if (statusCode >= 400 && statusCode < 500) return "bg-red-500/20 text-red-400"
+      if (statusCode >= 500) return "bg-red-500/20 text-red-400"
+      return "bg-yellow-500/20 text-yellow-400"
+    },
+
     // Copy text to clipboard
     async copyToClipboard(text) {
       const normalizedText = String(text ?? "")
@@ -1554,6 +1585,15 @@ document.addEventListener("alpine:init", () => {
         "Copy failed. Please copy manually from the code field.",
         "error",
       )
+    },
+
+    async copyUpdateCommand() {
+      const command = this.versionCheck.updateCommand || "git pull origin main"
+      await this.copyToClipboard(command)
+    },
+
+    async copyModelId(modelId) {
+      await this.copyToClipboard(modelId)
     },
 
     // Check if account is current (being used)
@@ -1683,6 +1723,8 @@ document.addEventListener("alpine:init", () => {
       this.playground.error = null
       this.playground.response = ""
       this.playground.duration = 0
+      this.playground.statusCode = null
+      this.playground.statusText = ""
 
       const startTime = Date.now()
 
@@ -1703,6 +1745,8 @@ document.addEventListener("alpine:init", () => {
           },
           body: JSON.stringify(body),
         })
+        this.playground.statusCode = response.status
+        this.playground.statusText = response.statusText || ""
         if (response.status === 401) {
           this.handleAuthExpired()
           throw new Error("Authentication required")
