@@ -556,15 +556,25 @@ document.addEventListener("alpine:init", () => {
         const { data } = await this.requestJson("/api/accounts")
         if (data.status === "ok") {
           this.accountPool = {
-            enabled: data.poolEnabled,
-            strategy: data.strategy,
-            accounts: data.accounts,
-            currentAccountId: data.currentAccountId,
-            configuredCount: data.configuredCount ?? data.accounts.length,
+            enabled: data.poolEnabled ?? false,
+            strategy: data.strategy ?? "sticky",
+            accounts: data.accounts ?? [],
+            currentAccountId: data.currentAccountId ?? null,
+            configuredCount: data.configuredCount ?? data.accounts?.length ?? 0,
           }
         }
       } catch (error) {
         console.error("Failed to fetch accounts:", error)
+        // Ensure accountPool has valid defaults on error
+        if (!this.accountPool || !this.accountPool.accounts) {
+          this.accountPool = {
+            enabled: false,
+            strategy: "sticky",
+            accounts: [],
+            currentAccountId: null,
+            configuredCount: 0,
+          }
+        }
       }
     },
 
