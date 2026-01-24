@@ -24,6 +24,7 @@ import {
 } from "./lib/token"
 import { usageStats } from "./lib/usage-stats"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
+import { webhook } from "./lib/webhook"
 import { server } from "./server"
 
 interface RunServerOptions {
@@ -133,6 +134,7 @@ async function initializeServices(config: Config): Promise<void> {
   await requestHistory.init()
   await requestCache.init()
   await costCalculator.init()
+  await webhook.init()
   initQueue({
     enabled: config.queueEnabled,
     maxConcurrent: config.queueMaxConcurrent,
