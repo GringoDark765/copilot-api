@@ -54,6 +54,18 @@ function getCacheKeyOptions(payload: ChatCompletionsPayload) {
     temperature: payload.temperature ?? undefined,
     max_tokens: payload.max_tokens ?? undefined,
     tools: payload.tools ?? undefined,
+    top_p: payload.top_p ?? undefined,
+    frequency_penalty: payload.frequency_penalty ?? undefined,
+    presence_penalty: payload.presence_penalty ?? undefined,
+    seed: payload.seed ?? undefined,
+    stop: payload.stop ?? undefined,
+    response_format: payload.response_format ?? undefined,
+    tool_choice: payload.tool_choice ?? undefined,
+    user: payload.user ?? undefined,
+    logit_bias: payload.logit_bias ?? undefined,
+    logprobs: payload.logprobs ?? undefined,
+    n: payload.n ?? undefined,
+    stream: payload.stream ?? undefined,
   }
 }
 
