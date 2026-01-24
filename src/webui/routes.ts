@@ -40,6 +40,7 @@ import { requestCache } from "~/lib/request-cache"
 import { updateQueueConfig } from "~/lib/request-queue"
 import { state } from "~/lib/state"
 import { usageStats } from "~/lib/usage-stats"
+import { cacheModels } from "~/lib/utils"
 import { checkVersion } from "~/lib/version-check"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { pollAccessToken } from "~/services/github/poll-access-token"
@@ -266,14 +267,17 @@ webuiRoutes.post("/api/server/restart", (c) => {
 /**
  * GET /api/models - Get available models
  */
-webuiRoutes.get("/api/models", (c) => {
+webuiRoutes.get("/api/models", async (c) => {
+  if (!state.models) {
+    await cacheModels()
+  }
+
   if (!state.models) {
     return c.json({ status: "error", error: "Models not loaded" }, 503)
   }
 
   return c.json({
     status: "ok",
-
     models: state.models.data.map((model) => {
       const caps = model.capabilities
       return {
@@ -553,6 +557,7 @@ webuiRoutes.get("/api/accounts", async (c) => {
     poolEnabled,
     strategy: poolConfigData.strategy,
     currentAccountId: currentAccount?.id ?? null,
+    configuredCount: poolConfigData.accounts.length,
     accounts: poolAccounts,
   })
 })

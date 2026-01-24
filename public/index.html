@@ -131,7 +131,7 @@
                 <div class="w-1.5 h-1.5 rounded-full bg-neon-purple glow-purple"></div>
                 <span>Pool Mode</span>
                 <span class="text-gray-400">•</span>
-                <span x-text="accountPool.accounts.length"></span>
+                <span x-text="accountPool.configuredCount || accountPool.accounts.length"></span>
             </div>
 
             <!-- Connection Status -->
@@ -433,7 +433,7 @@
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
                     <div class="bg-space-900 border border-space-border rounded-xl p-6">
                         <div class="text-gray-500 text-sm font-medium mb-2">Total Accounts</div>
-                        <div class="text-3xl font-bold text-white" x-text="accountPool.accounts.length"></div>
+                        <div class="text-3xl font-bold text-white" x-text="accountPool.configuredCount || accountPool.accounts.length"></div>
                     </div>
                     <div class="bg-space-900 border border-space-border rounded-xl p-6">
                         <div class="text-gray-500 text-sm font-medium mb-2">Active Accounts</div>

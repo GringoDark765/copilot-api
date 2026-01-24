@@ -138,6 +138,7 @@ document.addEventListener("alpine:init", () => {
       strategy: "sticky",
       accounts: [],
       currentAccountId: null,
+      configuredCount: 0,
     },
     newAccountLabel: "",
 
@@ -565,6 +566,7 @@ document.addEventListener("alpine:init", () => {
             strategy: data.strategy,
             accounts: data.accounts,
             currentAccountId: data.currentAccountId,
+            configuredCount: data.configuredCount ?? data.accounts.length,
           }
         }
       } catch (error) {
