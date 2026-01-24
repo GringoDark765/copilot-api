@@ -23,6 +23,7 @@ import {
   refreshAllQuotas,
   getCurrentAccount,
   toggleAccountPause,
+  setCurrentAccount,
 } from "~/lib/account-pool"
 import {
   readClaudeConfig,
@@ -643,6 +644,31 @@ webuiRoutes.post("/api/accounts/:id/pause", async (c) => {
       status: "ok",
       message: `Account ${id} ${result.paused ? "paused" : "resumed"}`,
       paused: result.paused,
+    })
+  } catch (error) {
+    return c.json({ status: "error", error: (error as Error).message }, 400)
+  }
+})
+
+/**
+ * POST /api/accounts/:id/set-current - Set account as current (sticky)
+ */
+webuiRoutes.post("/api/accounts/:id/set-current", async (c) => {
+  try {
+    const id = c.req.param("id")
+    const result = await setCurrentAccount(id)
+
+    if (!result.success) {
+      return c.json({ status: "error", error: "Account not found" }, 404)
+    }
+
+    const accounts = await getAccountsStatus()
+
+    return c.json({
+      status: "ok",
+      message: `Account ${id} set as current`,
+      accounts,
+      currentAccountId: id,
     })
   } catch (error) {
     return c.json({ status: "error", error: (error as Error).message }, 400)
