@@ -21,6 +21,13 @@ const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 const writeGithubToken = (token: string) =>
   fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
 
+const updateState = <K extends keyof typeof state>(
+  key: K,
+  value: (typeof state)[K],
+) => {
+  state[key] = value
+}
+
 /**
  * Get active Copilot token
  * Uses pool if enabled, otherwise single account
@@ -41,9 +48,13 @@ export async function getActiveCopilotToken(): Promise<string> {
   return state.copilotToken
 }
 
-export const setupCopilotToken = async () => {
-  const { token, refresh_in } = await getCopilotToken()
-  state.copilotToken = token
+export const setupCopilotToken = async (tokenOverride?: string) => {
+  if (tokenOverride) {
+    updateState("githubToken", tokenOverride)
+  }
+  const tokenSource = tokenOverride ?? state.githubToken
+  const { token, refresh_in } = await getCopilotToken(tokenSource)
+  updateState("copilotToken", token)
 
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
@@ -55,11 +66,11 @@ export const setupCopilotToken = async () => {
   setInterval(async () => {
     consola.debug("Refreshing Copilot token")
     try {
-      const { token } = await getCopilotToken()
-      state.copilotToken = token
+      const { token: newToken } = await getCopilotToken(tokenSource)
+      updateState("copilotToken", newToken)
       consola.debug("Copilot token refreshed")
       if (state.showToken) {
-        consola.info("Refreshed Copilot token:", token)
+        consola.info("Refreshed Copilot token:", newToken)
       }
     } catch (error) {
       consola.error("Failed to refresh Copilot token:", error)
@@ -79,7 +90,7 @@ export async function setupGitHubToken(
     const githubToken = await readGithubToken()
 
     if (githubToken && !options?.force) {
-      state.githubToken = githubToken
+      updateState("githubToken", githubToken)
       if (state.showToken) {
         consola.info("GitHub token:", githubToken)
       }
@@ -98,7 +109,7 @@ export async function setupGitHubToken(
 
     const token = await pollAccessToken(response)
     await writeGithubToken(token)
-    state.githubToken = token
+    updateState("githubToken", token)
 
     if (state.showToken) {
       consola.info("GitHub token:", token)
@@ -118,7 +129,7 @@ export async function setupGitHubToken(
 async function logUser() {
   const user = await getGitHubUser()
   consola.info(`Logged in as ${user.login}`)
-  state.githubUser = user
+  updateState("githubUser", user)
 }
 
 /**
