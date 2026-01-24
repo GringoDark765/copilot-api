@@ -115,9 +115,11 @@
     <!-- Navbar -->
     <nav class="h-14 border-b border-space-border flex items-center px-6 justify-between bg-space-900/50 backdrop-blur-md sticky top-0 z-40">
         <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple">
-                CP
-            </div>
+            <img
+                src="/favicon.svg"
+                alt="Copilot API"
+                class="h-8 w-8"
+            />
             <div class="flex flex-col">
                 <span class="text-sm font-bold tracking-wide text-white">COPILOT API</span>
                 <span class="text-[10px] text-gray-500 font-mono tracking-wider">PROXY CONSOLE</span>
@@ -169,9 +171,11 @@
         <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50">
             <div class="bg-space-900 border border-space-border rounded-xl p-8 w-full max-w-md mx-4 shadow-2xl">
                 <div class="flex items-center gap-3 mb-6">
-                    <div class="w-10 h-10 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple">
-                        CP
-                    </div>
+                    <img
+                        src="/favicon.svg"
+                        alt="Copilot API"
+                        class="h-10 w-10"
+                    />
                     <div>
                         <h2 class="text-xl font-bold text-white">Copilot API Console</h2>
                         <p class="text-xs text-gray-500">Enter password to continue</p>
@@ -201,9 +205,11 @@
     <template x-if="auth.checking">
         <div class="fixed inset-0 bg-space-950 flex items-center justify-center z-50">
             <div class="flex flex-col items-center gap-4">
-                <div class="w-12 h-12 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold glow-purple animate-pulse">
-                    CP
-                </div>
+                <img
+                    src="/favicon.svg"
+                    alt="Copilot API"
+                    class="h-12 w-12 animate-pulse"
+                />
                 <p class="text-gray-500 text-sm">Loading...</p>
             </div>
         </div>
