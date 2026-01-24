@@ -166,6 +166,7 @@ document.addEventListener("alpine:init", () => {
     historyTotal: 0,
     historyHasMore: false,
     autoRefreshInterval: null,
+    versionCheckInterval: null,
 
     // API Playground
     playground: {
@@ -195,6 +196,7 @@ document.addEventListener("alpine:init", () => {
         this.connectLogStream()
         this.connectNotificationStream()
         await this.checkVersion()
+        this.startVersionCheckPolling()
 
         // Auto-refresh every 30 seconds
         this.autoRefreshInterval = setInterval(() => {
@@ -282,6 +284,10 @@ document.addEventListener("alpine:init", () => {
         clearInterval(this.autoRefreshInterval)
         this.autoRefreshInterval = null
       }
+      if (this.versionCheckInterval) {
+        clearInterval(this.versionCheckInterval)
+        this.versionCheckInterval = null
+      }
       this.showToast("Session expired. Please login again.", "warning")
     },
 
@@ -319,6 +325,7 @@ document.addEventListener("alpine:init", () => {
           this.connectLogStream()
           this.connectNotificationStream()
           await this.checkVersion()
+          this.startVersionCheckPolling()
         } else {
           this.showToast(data.error || "Login failed", "error")
         }
@@ -346,10 +353,25 @@ document.addEventListener("alpine:init", () => {
           clearInterval(this.autoRefreshInterval)
           this.autoRefreshInterval = null
         }
+        if (this.versionCheckInterval) {
+          clearInterval(this.versionCheckInterval)
+          this.versionCheckInterval = null
+        }
         this.showToast("Logged out", "info")
       } catch (error) {
         console.error("Logout failed:", error)
       }
+    },
+
+    startVersionCheckPolling() {
+      if (this.versionCheckInterval) {
+        clearInterval(this.versionCheckInterval)
+      }
+      this.versionCheckInterval = setInterval(() => {
+        if (this.auth.authenticated || !this.auth.passwordRequired) {
+          this.checkVersion()
+        }
+      }, 120000)
     },
 
     // Fetch all data
