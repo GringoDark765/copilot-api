@@ -1,25 +1,31 @@
-/**
- * Multi-Account Pool Management
- * Manages multiple GitHub tokens with selection strategies
- */
-
 import consola from "consola"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
 import { getCopilotToken } from "~/services/github/get-copilot-token"
-import { getCopilotUsageForAccount } from "~/services/github/get-copilot-usage"
 import { getGitHubUser } from "~/services/github/get-user"
 
-// Selection strategies
+import {
+  notifyAccountRotation,
+  notifyAuthError,
+  notifyRateLimit,
+} from "./account-pool-notify"
+import {
+  checkAndAutoPauseAccounts as checkAndAutoPauseAccountsInternal,
+  checkMonthlyReset as checkMonthlyResetInternal,
+  fetchAccountQuota as fetchAccountQuotaInternal,
+  getEffectiveQuotaPercent,
+  needsQuotaRefresh,
+  refreshAllQuotas as refreshAllQuotasInternal,
+} from "./account-pool-quota"
+
 export type SelectionStrategy =
   | "sticky"
   | "round-robin"
   | "hybrid"
   | "quota-based"
 
-// Quota info per account
 export interface AccountQuota {
   chat: {
     remaining: number
@@ -43,7 +49,6 @@ export interface AccountQuota {
   lastFetched?: number
 }
 
-// Account status
 export interface AccountStatus {
   id: string
   login: string
@@ -62,31 +67,27 @@ export interface AccountStatus {
   quota?: AccountQuota // Quota information
 }
 
-// Pool configuration
 export interface PoolConfig {
   enabled: boolean
   strategy: SelectionStrategy
   accounts: Array<{ token: string; label?: string }>
 }
 
-// Pool state
-interface PoolState {
+export interface PoolState {
   accounts: Array<AccountStatus>
   currentIndex: number
   stickyAccountId?: string
   lastSelectedId?: string
-  // Pool config is now stored with state
+  lastAutoRotationAt?: number
   config?: {
     enabled: boolean
     strategy: SelectionStrategy
   }
 }
 
-// File paths
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const POOL_FILE = path.join(CONFIG_DIR, "account-pool.json")
 
-// In-memory state
 let poolState: PoolState = {
   accounts: [],
   currentIndex: 0,
@@ -98,9 +99,6 @@ let poolConfig: PoolConfig = {
   accounts: [],
 }
 
-/**
- * Ensure config directory exists
- */
 async function ensureDir(): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true })
@@ -109,9 +107,6 @@ async function ensureDir(): Promise<void> {
   }
 }
 
-/**
- * Load pool state from file
- */
 async function loadPoolState(): Promise<void> {
   try {
     await ensureDir()
@@ -122,8 +117,8 @@ async function loadPoolState(): Promise<void> {
       currentIndex: saved.currentIndex ?? 0,
       stickyAccountId: saved.stickyAccountId,
       lastSelectedId: saved.lastSelectedId,
+      lastAutoRotationAt: saved.lastAutoRotationAt,
     }
-    // Load config from saved state
     if (saved.config) {
       poolConfig.enabled = saved.config.enabled
       poolConfig.strategy = saved.config.strategy
@@ -133,13 +128,9 @@ async function loadPoolState(): Promise<void> {
   }
 }
 
-/**
- * Save pool state to file
- */
 async function savePoolState(): Promise<void> {
   try {
     await ensureDir()
-    // Include config in saved state
     const stateToSave = {
       ...poolState,
       config: {
@@ -153,15 +144,11 @@ async function savePoolState(): Promise<void> {
   }
 }
 
-/**
- * Initialize an account from a GitHub token
- */
 async function initializeAccount(
   token: string,
   label?: string,
 ): Promise<AccountStatus | null> {
   try {
-    // Get user info
     const user = await getGitHubUser(token)
 
     const account: AccountStatus = {
@@ -174,7 +161,6 @@ async function initializeAccount(
       active: true,
     }
 
-    // Try to get Copilot token
     try {
       const copilot = await getCopilotToken(token)
       account.copilotToken = copilot.token
@@ -192,9 +178,6 @@ async function initializeAccount(
   }
 }
 
-/**
- * Ensure pool state is loaded (called on first access)
- */
 let poolStateLoaded = false
 function markPoolStateLoaded(): void {
   poolStateLoaded = true
@@ -207,15 +190,10 @@ async function ensurePoolStateLoaded(): Promise<void> {
   }
 }
 
-/**
- * Initialize the account pool
- */
 export async function initializePool(config: PoolConfig): Promise<void> {
-  // Load saved state first
   await loadPoolState()
   markPoolStateLoaded()
 
-  // Merge config - saved config takes precedence for enabled/strategy
   const savedEnabled = poolConfig.enabled
   const savedStrategy = poolConfig.strategy
 
@@ -234,15 +212,12 @@ export async function initializePool(config: PoolConfig): Promise<void> {
     `Initializing account pool with ${config.accounts.length} accounts...`,
   )
 
-  // Initialize each account
   const newAccounts: Array<AccountStatus> = []
 
   for (const acc of config.accounts) {
-    // Check if already initialized
     const existing = poolState.accounts.find((a) => a.token === acc.token)
 
     if (existing) {
-      // Refresh Copilot token if expired
       if (
         !existing.copilotTokenExpires
         || Date.now() > existing.copilotTokenExpires - 60000
@@ -279,9 +254,6 @@ export async function initializePool(config: PoolConfig): Promise<void> {
   )
 }
 
-/**
- * Reset expired rate limits and return first available account
- */
 function resetExpiredRateLimits(): AccountStatus | null {
   const now = Date.now()
   for (const account of poolState.accounts) {
@@ -301,9 +273,6 @@ function resetExpiredRateLimits(): AccountStatus | null {
   return null
 }
 
-/**
- * Select account based on sticky strategy
- */
 function selectStickyAccount(
   activeAccounts: Array<AccountStatus>,
 ): AccountStatus {
@@ -318,9 +287,6 @@ function selectStickyAccount(
   return selected
 }
 
-/**
- * Select account based on round-robin strategy
- */
 function selectRoundRobinAccount(
   activeAccounts: Array<AccountStatus>,
 ): AccountStatus {
@@ -329,9 +295,6 @@ function selectRoundRobinAccount(
   return activeAccounts[index]
 }
 
-/**
- * Get the next account based on strategy
- */
 export function selectAccount(): AccountStatus | null {
   if (!poolConfig.enabled || poolState.accounts.length === 0) {
     return null
@@ -398,10 +361,6 @@ export function selectAccount(): AccountStatus | null {
   return selected
 }
 
-/**
- * Get Copilot token for a request
- * Returns the token from the selected account
- */
 export async function getPooledCopilotToken(): Promise<string | null> {
   // Check for monthly reset first
   await checkMonthlyReset()
@@ -442,6 +401,21 @@ export async function getPooledCopilotToken(): Promise<string | null> {
   account.lastUsed = Date.now()
   account.requestCount++
 
+  try {
+    const config = await import("./config").then((m) => m.getConfig())
+    const requestLimit = config.autoRotationTriggers.requestCount
+    if (
+      config.autoRotationEnabled
+      && requestLimit > 0
+      && account.requestCount >= requestLimit
+    ) {
+      await rotateToNextAccount({ account, reason: "request-count" })
+      account.requestCount = 0
+    }
+  } catch {
+    // Ignore rotation errors
+  }
+
   // Save state on first use or periodically (every 10 requests) to avoid too many writes
   if (isFirstUse || account.requestCount % 10 === 0) {
     void savePoolState()
@@ -450,93 +424,55 @@ export async function getPooledCopilotToken(): Promise<string | null> {
   return account.copilotToken
 }
 
-/**
- * Send notifications for rate limit event
- */
-async function notifyRateLimit(
-  accountLogin: string,
-  resetAt: number,
-): Promise<void> {
-  try {
-    const { webhook } = await import("./webhook")
-    await webhook.sendRateLimit(accountLogin, resetAt)
-  } catch {
-    // Webhook not initialized
-  }
-
-  try {
-    const { notificationCenter } = await import("./notification-center")
-    notificationCenter.rateLimit(accountLogin, resetAt)
-  } catch {
-    // Notification center not initialized
-  }
-}
-
-/**
- * Send notifications for auth error event
- */
-async function notifyAuthError(accountLogin: string): Promise<void> {
-  try {
-    const { webhook } = await import("./webhook")
-    await webhook.sendAccountError(accountLogin, "Authentication failed")
-  } catch {
-    // Webhook not initialized
-  }
-
-  try {
-    const { notificationCenter } = await import("./notification-center")
-    notificationCenter.accountError(accountLogin, "Authentication failed")
-  } catch {
-    // Notification center not initialized
-  }
-}
-
-/**
- * Send notifications for account rotation event
- */
-async function notifyAccountRotation(
-  fromAccount: string,
-  toAccount: string,
-  reason: string,
-): Promise<void> {
-  try {
-    const { webhook } = await import("./webhook")
-    await webhook.sendAccountRotation(fromAccount, toAccount, reason)
-  } catch {
-    // Webhook not initialized
-  }
-
-  try {
-    const { notificationCenter } = await import("./notification-center")
-    notificationCenter.accountRotation(fromAccount, toAccount, reason)
-  } catch {
-    // Notification center not initialized
-  }
-}
-
-/**
- * Check if auto-rotation should be triggered
- */
 function shouldAutoRotate(
   errorType: "rate-limit" | "auth" | "other",
   errorCount: number,
   config: {
     autoRotationEnabled?: boolean
-    autoRotationTriggers?: { errorCount?: number }
+    autoRotationTriggers: { errorCount: number }
+    autoRotationCooldownMinutes?: number
   },
 ): boolean {
   if (!config.autoRotationEnabled) return false
   if (errorType === "rate-limit") return true
   if (errorType === "other") {
-    const threshold = config.autoRotationTriggers?.errorCount ?? 3
+    const threshold = config.autoRotationTriggers.errorCount
     return errorCount >= threshold
   }
   return false
 }
 
-/**
- * Report an error for the current account
- */
+function canRotateNow(config: {
+  autoRotationCooldownMinutes?: number
+}): boolean {
+  const cooldownMinutes = config.autoRotationCooldownMinutes ?? 0
+  if (cooldownMinutes <= 0) return true
+  const last = poolState.lastAutoRotationAt
+  if (!last) return true
+  return Date.now() - last >= cooldownMinutes * 60 * 1000
+}
+
+async function rotateToNextAccount({
+  account,
+  reason,
+}: {
+  account: AccountStatus
+  reason: string
+}): Promise<void> {
+  const config = await import("./config").then((m) => m.getConfig())
+  if (!config.autoRotationEnabled || !canRotateNow(config)) return
+
+  const nextAccount = findNextAvailableAccount(account.id)
+  if (nextAccount) {
+    poolState.stickyAccountId = nextAccount.id
+    poolState.currentIndex = poolState.accounts.findIndex(
+      (a) => a.id === nextAccount.id,
+    )
+    poolState.lastAutoRotationAt = Date.now()
+    await notifyAccountRotation(account.login, nextAccount.login, reason)
+  }
+}
+
 export async function reportAccountError(
   errorType: "rate-limit" | "auth" | "other",
   resetAt?: number,
@@ -567,13 +503,14 @@ export async function reportAccountError(
     shouldAutoRotate(errorType, account.errorCount, config)
     || poolConfig.strategy === "hybrid"
 
-  if (doRotate) {
+  if (doRotate && canRotateNow(config)) {
     const nextAccount = findNextAvailableAccount(account.id)
     if (nextAccount) {
       poolState.stickyAccountId = nextAccount.id
       poolState.currentIndex = poolState.accounts.findIndex(
         (a) => a.id === nextAccount.id,
       )
+      poolState.lastAutoRotationAt = Date.now()
 
       consola.info(
         `Auto-rotated from ${previousAccount} to ${nextAccount.login}`,
@@ -589,9 +526,6 @@ export async function reportAccountError(
   await savePoolState()
 }
 
-/**
- * Find next available account (for rotation)
- */
 function findNextAvailableAccount(excludeId: string): AccountStatus | null {
   const availableAccounts = poolState.accounts.filter(
     (a) => a.id !== excludeId && a.active && !a.rateLimited && !a.paused,
@@ -607,9 +541,6 @@ function findNextAvailableAccount(excludeId: string): AccountStatus | null {
   })
 }
 
-/**
- * Add a new account to the pool
- */
 export async function addAccount(
   token: string,
   label?: string,
@@ -640,10 +571,6 @@ export async function addAccount(
   return account
 }
 
-/**
- * Add the initial/primary account to the pool (called at startup)
- * This ensures the first logged-in account is part of the pool
- */
 export async function addInitialAccount(
   token: string,
   userInfo: { login: string; id: number; name?: string; avatar_url?: string },
@@ -707,10 +634,6 @@ export async function addInitialAccount(
   return account
 }
 
-/**
- * Remove an account from the pool
- * Returns the removed account's token for config sync, or null if not found
- */
 export async function removeAccount(
   id: string,
 ): Promise<{ removed: boolean; token?: string }> {
@@ -733,9 +656,6 @@ export async function removeAccount(
   return { removed: true, token }
 }
 
-/**
- * Get all accounts status (sanitized - no tokens)
- */
 export async function getAccountsStatus(): Promise<
   Array<Omit<AccountStatus, "token" | "copilotToken">>
 > {
@@ -756,9 +676,6 @@ export async function getAccountsStatus(): Promise<
   }))
 }
 
-/**
- * Pause or unpause an account
- */
 export async function toggleAccountPause(
   id: string,
   paused: boolean,
@@ -774,9 +691,6 @@ export async function toggleAccountPause(
   return { success: true, paused: account.paused }
 }
 
-/**
- * Get pool configuration
- */
 export async function getPoolConfig(): Promise<PoolConfig> {
   await ensurePoolStateLoaded()
   return {
@@ -788,9 +702,6 @@ export async function getPoolConfig(): Promise<PoolConfig> {
   }
 }
 
-/**
- * Update pool configuration
- */
 export async function updatePoolConfig(
   updates: Partial<Pick<PoolConfig, "enabled" | "strategy">>,
 ): Promise<void> {
@@ -804,24 +715,15 @@ export async function updatePoolConfig(
   await savePoolState()
 }
 
-/**
- * Check if pool is enabled and has accounts
- */
 export async function isPoolEnabled(): Promise<boolean> {
   await ensurePoolStateLoaded()
   return poolConfig.enabled && poolState.accounts.length > 0
 }
 
-/**
- * Check if pool is enabled (sync version for internal use)
- */
 export function isPoolEnabledSync(): boolean {
   return poolConfig.enabled && poolState.accounts.length > 0
 }
 
-/**
- * Get current account (for status display)
- */
 export function getCurrentAccount(): AccountStatus | null {
   const activeAccounts = poolState.accounts.filter(
     (a) => a.active && !a.rateLimited && !a.paused,
@@ -846,9 +748,6 @@ export function getCurrentAccount(): AccountStatus | null {
   return activeAccounts[0]
 }
 
-/**
- * Refresh all account tokens
- */
 export async function refreshAllTokens(): Promise<void> {
   for (const account of poolState.accounts) {
     try {
@@ -866,169 +765,28 @@ export async function refreshAllTokens(): Promise<void> {
   await savePoolState()
 }
 
-// Quota management configuration
-const QUOTA_THRESHOLD_PERCENT = 5 // Pause account when quota is below this percentage
-const QUOTA_REFRESH_INTERVAL = 5 * 60 * 1000 // Refresh quota every 5 minutes
-
-/**
- * Fetch and update quota for a specific account
- */
 export async function fetchAccountQuota(
   account: AccountStatus,
 ): Promise<AccountQuota | null> {
-  try {
-    const usage = await getCopilotUsageForAccount(account.token)
-    const quota: AccountQuota = {
-      chat: {
-        remaining: usage.quota_snapshots.chat.quota_remaining,
-        entitlement: usage.quota_snapshots.chat.entitlement,
-        percentRemaining: usage.quota_snapshots.chat.percent_remaining,
-        unlimited: usage.quota_snapshots.chat.unlimited,
-      },
-      completions: {
-        remaining: usage.quota_snapshots.completions.quota_remaining,
-        entitlement: usage.quota_snapshots.completions.entitlement,
-        percentRemaining: usage.quota_snapshots.completions.percent_remaining,
-        unlimited: usage.quota_snapshots.completions.unlimited,
-      },
-      premiumInteractions: {
-        remaining: usage.quota_snapshots.premium_interactions.quota_remaining,
-        entitlement: usage.quota_snapshots.premium_interactions.entitlement,
-        percentRemaining:
-          usage.quota_snapshots.premium_interactions.percent_remaining,
-        unlimited: usage.quota_snapshots.premium_interactions.unlimited,
-      },
-      resetDate: usage.quota_reset_date,
-      lastFetched: Date.now(),
-    }
-    // Find the account in poolState to update (avoid race condition)
-    const poolAccount = poolState.accounts.find((a) => a.id === account.id)
-    if (poolAccount) {
-      poolAccount.quota = quota
-    }
-    return quota
-  } catch (error) {
-    consola.warn(`Failed to fetch quota for ${account.login}:`, error)
-    return null
-  }
+  return fetchAccountQuotaInternal(account, poolState)
 }
 
-/**
- * Refresh quota for all accounts
- */
 export async function refreshAllQuotas(): Promise<void> {
-  consola.info("Refreshing quota for all accounts...")
-  for (const account of poolState.accounts) {
-    await fetchAccountQuota(account)
-  }
-  await savePoolState()
-  consola.success("Quota refreshed for all accounts")
+  await refreshAllQuotasInternal(poolState, savePoolState)
 }
 
-/**
- * Check if quota needs refresh (older than QUOTA_REFRESH_INTERVAL)
- */
-function needsQuotaRefresh(account: AccountStatus): boolean {
-  if (!account.quota?.lastFetched) return true
-  return Date.now() - account.quota.lastFetched > QUOTA_REFRESH_INTERVAL
-}
-
-/**
- * Get the effective quota percentage (minimum of chat and premium)
- * This is used for selection and auto-pause decisions
- */
-function getEffectiveQuotaPercent(account: AccountStatus): number {
-  if (!account.quota) return 100 // Assume full if no quota info
-  if (
-    account.quota.chat.unlimited
-    && account.quota.premiumInteractions.unlimited
-  ) {
-    return 100
-  }
-  // Use the lower of chat and premium interactions
-  const chatPercent =
-    account.quota.chat.unlimited ? 100 : account.quota.chat.percentRemaining
-  const premiumPercent =
-    account.quota.premiumInteractions.unlimited ?
-      100
-    : account.quota.premiumInteractions.percentRemaining
-  return Math.min(chatPercent, premiumPercent)
-}
-
-/**
- * Check and auto-pause accounts with low quota
- */
 export async function checkAndAutoPauseAccounts(): Promise<void> {
-  let changed = false
-  for (const account of poolState.accounts) {
-    if (account.paused && account.pausedReason === "manual") {
-      continue // Don't touch manually paused accounts
-    }
-
-    const quotaPercent = getEffectiveQuotaPercent(account)
-    if (quotaPercent <= QUOTA_THRESHOLD_PERCENT && !account.paused) {
-      account.paused = true
-      account.pausedReason = "quota"
-      consola.warn(
-        `Account ${account.login} auto-paused: quota at ${quotaPercent.toFixed(1)}%`,
-      )
-      changed = true
-    } else if (
-      quotaPercent > QUOTA_THRESHOLD_PERCENT
-      && account.pausedReason === "quota"
-    ) {
-      // Reactivate if quota recovered (shouldn't normally happen mid-month)
-      account.paused = false
-      account.pausedReason = undefined
-      consola.info(`Account ${account.login} reactivated: quota recovered`)
-      changed = true
-    }
-  }
-  if (changed) {
-    await savePoolState()
-  }
+  await checkAndAutoPauseAccountsInternal(
+    poolState,
+    rotateToNextAccount,
+    savePoolState,
+  )
 }
-
-/**
- * Check if we're in a new month and reactivate quota-paused accounts
- */
-let lastMonthCheck: number | null = null
 
 export async function checkMonthlyReset(): Promise<void> {
-  const now = new Date()
-  const currentMonth = now.getFullYear() * 12 + now.getMonth()
-
-  if (lastMonthCheck === null) {
-    lastMonthCheck = currentMonth
-    return
-  }
-
-  if (currentMonth > lastMonthCheck) {
-    consola.info("New month detected! Reactivating quota-paused accounts...")
-    lastMonthCheck = currentMonth
-
-    let changed = false
-    for (const account of poolState.accounts) {
-      if (account.paused && account.pausedReason === "quota") {
-        account.paused = false
-        account.pausedReason = undefined
-        account.quota = undefined // Clear old quota, will be refreshed
-        consola.success(`Account ${account.login} reactivated for new month`)
-        changed = true
-      }
-    }
-
-    if (changed) {
-      await savePoolState()
-      // Refresh quota for all accounts
-      await refreshAllQuotas()
-    }
-  }
+  await checkMonthlyResetInternal(poolState, refreshAllQuotas, savePoolState)
 }
 
-/**
- * Select account based on highest quota (smart selection)
- */
 function selectByQuota(activeAccounts: Array<AccountStatus>): AccountStatus {
   // Sort by effective quota percentage (descending)
   const sorted = [...activeAccounts].sort((a, b) => {
