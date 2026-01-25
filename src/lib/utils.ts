@@ -5,6 +5,14 @@ import { getVSCodeVersion } from "~/services/get-vscode-version"
 
 import { state } from "./state"
 
+/**
+ * Remove x-anthropic-billing-header from text content.
+ * Claude Code injects this header which Copilot API doesn't accept.
+ */
+export function sanitizeBillingHeader(text: string): string {
+  return text.replace(/^x-anthropic-billing-header:.*\n\n/m, "")
+}
+
 export const sleep = (ms: number) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)

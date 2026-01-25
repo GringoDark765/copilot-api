@@ -21,7 +21,7 @@ import {
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { usageStats } from "~/lib/usage-stats"
-import { isNullish } from "~/lib/utils"
+import { isNullish, sanitizeBillingHeader } from "~/lib/utils"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
@@ -231,6 +231,37 @@ function handleStreamingResponse(c: Context, ctx: CompletionContext): Response {
   })
 }
 
+function sanitizeMessages(
+  payload: ChatCompletionsPayload,
+): ChatCompletionsPayload {
+  const sanitizedMessages = payload.messages.map((msg) => {
+    // Only sanitize system and developer role messages
+    if (msg.role !== "system" && msg.role !== "developer") {
+      return msg
+    }
+
+    // Handle string content
+    if (typeof msg.content === "string") {
+      return { ...msg, content: sanitizeBillingHeader(msg.content) }
+    }
+
+    // Handle array content (text parts)
+    if (Array.isArray(msg.content)) {
+      const sanitizedContent = msg.content.map((part) => {
+        if (part.type === "text") {
+          return { ...part, text: sanitizeBillingHeader(part.text) }
+        }
+        return part
+      })
+      return { ...msg, content: sanitizedContent }
+    }
+
+    return msg
+  })
+
+  return { ...payload, messages: sanitizedMessages }
+}
+
 function preparePayload(
   payload: ChatCompletionsPayload,
 ): ChatCompletionsPayload {
@@ -319,7 +350,9 @@ export async function handleCompletion(c: Context) {
   const rawPayload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(rawPayload).slice(-400))
 
-  const payload = applyMaxTokensIfNeeded(preparePayload(rawPayload))
+  const payload = applyMaxTokensIfNeeded(
+    preparePayload(sanitizeMessages(rawPayload)),
+  )
   const accountInfo =
     isPoolEnabledSync() ? (getCurrentAccount()?.login ?? null) : null
 

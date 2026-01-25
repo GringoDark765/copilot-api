@@ -1,3 +1,4 @@
+import { sanitizeBillingHeader } from "~/lib/utils"
 import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
@@ -85,7 +86,7 @@ function handleSystemPrompt(
 
   // Remove x-anthropic-billing-header from system prompt
   // Claude Code injects this header which Copilot API doesn't accept
-  systemText = systemText.replace(/^x-anthropic-billing-header:.*\n\n/m, "")
+  systemText = sanitizeBillingHeader(systemText)
 
   return [{ role: "system", content: systemText }]
 }
