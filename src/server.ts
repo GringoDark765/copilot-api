@@ -21,12 +21,13 @@ server.use(async (c, next) => {
   const method = c.req.method
   const path = c.req.path
 
-  // Skip logging for static files and frequent polling endpoints
+  // Skip logging for static files, frequent polling endpoints, and telemetry
   const skipLog =
     path.startsWith("/js/")
     || path.startsWith("/css/")
     || path === "/favicon.svg"
     || path === "/api/logs/stream"
+    || path === "/api/event_logging/batch"
 
   if (!skipLog) {
     logEmitter.log("debug", `<-- ${method} ${path}`)

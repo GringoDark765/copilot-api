@@ -1,6 +1,7 @@
 /**
  * Request Caching Module
  * Caches identical requests to save quota
+ * Uses proper LRU with O(1) eviction via doubly linked list
  */
 
 import consola from "consola"
@@ -20,6 +21,13 @@ export interface CacheEntry {
   createdAt: number
   lastAccessed: number
   hits: number
+}
+
+// Internal node for doubly linked list (LRU tracking)
+interface LRUNode {
+  key: string
+  prev: LRUNode | null
+  next: LRUNode | null
 }
 
 export interface CacheConfig {
@@ -42,8 +50,14 @@ export interface CacheStats {
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const CACHE_FILE = path.join(CONFIG_DIR, "request-cache.json")
 
-// In-memory cache using Map for LRU eviction
+// In-memory cache using Map for O(1) lookup
 let cache: Map<string, CacheEntry> = new Map()
+
+// LRU tracking with doubly linked list for O(1) eviction
+let lruNodes: Map<string, LRUNode> = new Map()
+let lruHead: LRUNode | null = null // Most recently used
+let lruTail: LRUNode | null = null // Least recently used
+
 let cacheConfig: CacheConfig = {
   enabled: false,
   maxSize: 1000,
@@ -55,6 +69,82 @@ let hits = 0
 let misses = 0
 let savedTokens = 0
 let isDirty = false
+
+/**
+ * Move a node to the front (most recently used)
+ */
+function moveToFront(node: LRUNode): void {
+  if (node === lruHead) return // Already at front
+
+  // Remove from current position
+  if (node.prev) node.prev.next = node.next
+  if (node.next) node.next.prev = node.prev
+  if (node === lruTail) lruTail = node.prev
+
+  // Move to front
+  node.prev = null
+  node.next = lruHead
+  if (lruHead) lruHead.prev = node
+  lruHead = node
+  if (!lruTail) lruTail = node
+}
+
+/**
+ * Add a new node to the front
+ */
+function addToFront(key: string): LRUNode {
+  const node: LRUNode = { key, prev: null, next: lruHead }
+  if (lruHead) lruHead.prev = node
+  lruHead = node
+  if (!lruTail) lruTail = node
+  lruNodes.set(key, node)
+  return node
+}
+
+/**
+ * Remove tail node (least recently used)
+ */
+function removeTail(): string | null {
+  if (!lruTail) return null
+
+  const key = lruTail.key
+  lruNodes.delete(key)
+
+  if (lruTail.prev) {
+    lruTail.prev.next = null
+    lruTail = lruTail.prev
+  } else {
+    // List is now empty
+    lruHead = null
+    lruTail = null
+  }
+
+  return key
+}
+
+/**
+ * Remove a specific node
+ */
+function removeNode(key: string): void {
+  const node = lruNodes.get(key)
+  if (!node) return
+
+  if (node.prev) node.prev.next = node.next
+  if (node.next) node.next.prev = node.prev
+  if (node === lruHead) lruHead = node.next
+  if (node === lruTail) lruTail = node.prev
+
+  lruNodes.delete(key)
+}
+
+/**
+ * Reset LRU state
+ */
+function resetLRU(): void {
+  lruNodes = new Map()
+  lruHead = null
+  lruTail = null
+}
 
 /**
  * Ensure config directory exists
@@ -173,14 +263,18 @@ async function loadCache(): Promise<void> {
     }
 
     cache = new Map()
+    resetLRU()
     const now = Date.now()
     const ttlMs = cacheConfig.ttlSeconds * 1000
 
-    // Load only non-expired entries
-    for (const entry of parsed.entries ?? []) {
-      if (now - entry.createdAt < ttlMs) {
-        cache.set(entry.key, entry)
-      }
+    // Load entries sorted by lastAccessed (oldest first for proper LRU order)
+    const validEntries = (parsed.entries ?? [])
+      .filter((entry) => now - entry.createdAt < ttlMs)
+      .sort((a, b) => a.lastAccessed - b.lastAccessed)
+
+    for (const entry of validEntries) {
+      cache.set(entry.key, entry)
+      addToFront(entry.key)
     }
 
     // Restore stats
@@ -193,6 +287,7 @@ async function loadCache(): Promise<void> {
     consola.debug(`Cache loaded: ${cache.size} entries`)
   } catch {
     cache = new Map()
+    resetLRU()
     consola.debug("Starting fresh cache")
   }
 }
@@ -222,23 +317,18 @@ function saveCache(): void {
 }
 
 /**
- * Evict least recently used entries
+ * Evict least recently used entries - O(1) per eviction
  */
 function evictLRU(): void {
-  if (cache.size <= cacheConfig.maxSize) return
-
-  // Convert to array and sort by lastAccessed
-  const entries = Array.from(cache.entries()).sort(
-    (a, b) => a[1].lastAccessed - b[1].lastAccessed,
-  )
-
-  // Remove oldest entries until we're under the limit
-  const toRemove = cache.size - cacheConfig.maxSize + 1
-  for (let i = 0; i < toRemove; i++) {
-    cache.delete(entries[i][0])
+  while (cache.size > cacheConfig.maxSize) {
+    const key = removeTail()
+    if (key) {
+      cache.delete(key)
+      isDirty = true
+    } else {
+      break
+    }
   }
-
-  isDirty = true
 }
 
 /**
@@ -260,17 +350,22 @@ export function getCachedResponse(key: string): CacheEntry | null {
   const ttlMs = cacheConfig.ttlSeconds * 1000
   if (now - entry.createdAt > ttlMs) {
     cache.delete(key)
+    removeNode(key)
     misses++
     isDirty = true
     return null
   }
 
-  // Update stats
+  // Update stats and move to front of LRU
   entry.lastAccessed = now
   entry.hits++
   hits++
   savedTokens += entry.inputTokens + entry.outputTokens
   isDirty = true
+
+  // Move to front of LRU (most recently used)
+  const node = lruNodes.get(key)
+  if (node) moveToFront(node)
 
   return entry
 }
@@ -308,6 +403,14 @@ export function setCachedResponse({
     hits: 0,
   }
 
+  // If key already exists, update LRU position
+  if (cache.has(key)) {
+    const node = lruNodes.get(key)
+    if (node) moveToFront(node)
+  } else {
+    addToFront(key)
+  }
+
   cache.set(key, entry)
   isDirty = true
 
@@ -321,6 +424,7 @@ export function setCachedResponse({
 export function deleteCacheEntry(key: string): boolean {
   const deleted = cache.delete(key)
   if (deleted) {
+    removeNode(key)
     isDirty = true
   }
   return deleted
@@ -331,6 +435,7 @@ export function deleteCacheEntry(key: string): boolean {
  */
 export function clearCache(): void {
   cache = new Map()
+  resetLRU()
   isDirty = true
   consola.info("Cache cleared")
 }
@@ -369,6 +474,7 @@ export function updateCacheConfig(config: Partial<CacheConfig>): void {
   // If disabled, clear the cache
   if (!cacheConfig.enabled) {
     cache = new Map()
+    resetLRU()
   }
 
   // Evict if max size reduced

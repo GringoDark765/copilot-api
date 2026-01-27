@@ -27,6 +27,7 @@ import {
 } from "./account-pool-selection"
 import {
   ensurePoolStateLoaded,
+  invalidateActiveAccountsCache,
   isPoolStateLoaded,
   loadPoolState,
   markPoolStateLoaded,
@@ -100,6 +101,7 @@ async function initializeAccount(
       consola.warn(`Account ${account.login} has no Copilot access:`, error)
       account.active = false
       account.lastError = "No Copilot access"
+      invalidateActiveAccountsCache()
     }
 
     return account
@@ -114,14 +116,21 @@ function updateAccountToken(
   copilotToken: string,
   expiresIn: number,
 ): void {
+  const wasInactive = !account.active || account.rateLimited
   account.copilotToken = copilotToken
   account.copilotTokenExpires = Date.now() + expiresIn * 1000
   account.active = true
   account.rateLimited = false
+  if (wasInactive) {
+    invalidateActiveAccountsCache()
+  }
 }
 
 function markAccountInactive(account: AccountStatus): void {
-  account.active = false
+  if (account.active) {
+    account.active = false
+    invalidateActiveAccountsCache()
+  }
 }
 
 async function refreshAccountToken(account: AccountStatus): Promise<void> {
@@ -159,7 +168,7 @@ export async function initializePool(config: PoolConfig): Promise<void> {
     for (const account of poolState.accounts) {
       await refreshAccountToken(account)
     }
-    await savePoolState()
+    savePoolState()
     await syncAccountsToConfig()
     return
   }
@@ -213,7 +222,7 @@ export async function initializePool(config: PoolConfig): Promise<void> {
     ...poolState,
     accounts: mergedAccounts,
   })
-  await savePoolState()
+  savePoolState()
   await syncAccountsToConfig()
 
   const activeCount = mergedAccounts.filter((a) => a.active).length
@@ -224,7 +233,7 @@ export async function initializePool(config: PoolConfig): Promise<void> {
 
 export async function getPooledCopilotToken(): Promise<string | null> {
   // Check for monthly reset first
-  await checkMonthlyReset()
+  checkMonthlyReset()
 
   const account = selectAccount()
   if (!account) return null
@@ -239,12 +248,13 @@ export async function getPooledCopilotToken(): Promise<string | null> {
       const copilot = await getCopilotToken(account.token)
       account.copilotToken = copilot.token
       account.copilotTokenExpires = Date.now() + copilot.refresh_in * 1000
-      await savePoolState()
+      savePoolState()
     } catch (error) {
       consola.error(`Failed to refresh token for ${account.login}:`, error)
       account.active = false
       account.lastError = String(error)
-      await savePoolState()
+      invalidateActiveAccountsCache()
+      savePoolState()
       // Try next account
       return getPooledCopilotToken()
     }
@@ -253,8 +263,8 @@ export async function getPooledCopilotToken(): Promise<string | null> {
   // Refresh quota if needed (async, don't block request)
   if (needsQuotaRefresh(account)) {
     void fetchAccountQuota(account).then(() => {
-      void checkAndAutoPauseAccounts()
-      void savePoolState()
+      checkAndAutoPauseAccounts()
+      savePoolState()
     })
   }
 
@@ -279,7 +289,7 @@ export async function getPooledCopilotToken(): Promise<string | null> {
 
   // Save state on first use or periodically (every 10 requests) to avoid too many writes
   if (isFirstUse || account.requestCount % 10 === 0) {
-    void savePoolState()
+    savePoolState()
   }
 
   return account.copilotToken
@@ -349,12 +359,14 @@ export async function reportAccountError(
   if (errorType === "rate-limit") {
     account.rateLimited = true
     account.rateLimitResetAt = resetAt ?? Date.now() + 60000
+    invalidateActiveAccountsCache()
     consola.warn(
       `Account ${account.login} rate limited until ${new Date(account.rateLimitResetAt).toISOString()}`,
     )
     await notifyRateLimit(account.login, account.rateLimitResetAt)
   } else if (errorType === "auth") {
     account.active = false
+    invalidateActiveAccountsCache()
     consola.error(`Account ${account.login} auth failed, deactivating`)
     await notifyAuthError(account.login)
   }
@@ -383,7 +395,7 @@ export async function reportAccountError(
     }
   }
 
-  await savePoolState()
+  savePoolState()
 }
 
 export async function addAccount(
@@ -405,7 +417,7 @@ export async function addAccount(
       poolConfig.enabled = true
       consola.info("Account pool auto-enabled")
     }
-    await savePoolState()
+    savePoolState()
     await syncAccountsToConfig()
     consola.success(`Account ${account.login} added to pool`)
   }
@@ -426,7 +438,7 @@ export async function addInitialAccount(
     if (poolState.stickyAccountId !== existingAccount.id) {
       poolState.stickyAccountId = existingAccount.id
       syncGlobalStateToAccount(existingAccount)
-      await savePoolState()
+      savePoolState()
       consola.info(`Switched active account to ${existingAccount.login}`)
     }
     return existingAccount
@@ -462,6 +474,7 @@ export async function addInitialAccount(
     )
     account.active = false
     account.lastError = "No Copilot access"
+    invalidateActiveAccountsCache()
   }
 
   poolState.accounts.unshift(account)
@@ -473,7 +486,7 @@ export async function addInitialAccount(
     consola.info("Account pool auto-enabled")
   }
 
-  await savePoolState()
+  savePoolState()
   await syncAccountsToConfig()
   consola.success(`Initial account ${account.login} added to pool`)
 
@@ -502,7 +515,7 @@ export async function removeAccount(
     syncGlobalStateToAccount(nextAccount ?? null)
   }
 
-  await savePoolState()
+  savePoolState()
 
   // Sync removal to config.json
   try {
@@ -561,7 +574,8 @@ export async function toggleAccountPause(
 
   account.paused = paused
   account.pausedReason = paused ? "manual" : undefined
-  await savePoolState()
+  invalidateActiveAccountsCache()
+  savePoolState()
   consola.info(`Account ${id} ${paused ? "paused" : "resumed"}`)
   return { success: true, paused: account.paused }
 }
@@ -587,7 +601,7 @@ export async function updatePoolConfig(
   if (updates.strategy !== undefined) {
     poolConfig.strategy = updates.strategy
   }
-  await savePoolState()
+  savePoolState()
 }
 
 export async function isPoolEnabled(): Promise<boolean> {
@@ -600,20 +614,30 @@ export function isPoolEnabledSync(): boolean {
 }
 
 export async function refreshAllTokens(): Promise<void> {
+  let statusChanged = false
   for (const account of poolState.accounts) {
     try {
       const copilot = await getCopilotToken(account.token)
       account.copilotToken = copilot.token
       account.copilotTokenExpires = Date.now() + copilot.refresh_in * 1000
+      if (!account.active || account.rateLimited) {
+        statusChanged = true
+      }
       account.active = true
       account.rateLimited = false
       account.errorCount = 0
     } catch (error) {
+      if (account.active) {
+        statusChanged = true
+      }
       account.active = false
       account.lastError = String(error)
     }
   }
-  await savePoolState()
+  if (statusChanged) {
+    invalidateActiveAccountsCache()
+  }
+  savePoolState()
 }
 
 export async function fetchAccountQuota(
@@ -622,25 +646,26 @@ export async function fetchAccountQuota(
   return fetchAccountQuotaInternal(account, poolState)
 }
 
-export async function refreshAllQuotas(): Promise<void> {
-  await refreshAllQuotasInternal(poolState, savePoolState)
+export function refreshAllQuotas(): void {
+  refreshAllQuotasInternal(poolState, savePoolState)
 }
 
-export async function checkAndAutoPauseAccounts(): Promise<void> {
-  await checkAndAutoPauseAccountsInternal(
+export function checkAndAutoPauseAccounts(): void {
+  checkAndAutoPauseAccountsInternal(
     poolState,
     rotateToNextAccount,
     savePoolState,
   )
 }
 
-export async function checkMonthlyReset(): Promise<void> {
-  await checkMonthlyResetInternal(poolState, refreshAllQuotas, savePoolState)
+export function checkMonthlyReset(): void {
+  checkMonthlyResetInternal(poolState, refreshAllQuotas, savePoolState)
 }
 
-export async function setCurrentAccount(
-  accountId: string,
-): Promise<{ success: boolean; account?: AccountStatus }> {
+export function setCurrentAccount(accountId: string): {
+  success: boolean
+  account?: AccountStatus
+} {
   const account = poolState.accounts.find((a) => a.id === accountId)
 
   if (!account) {
@@ -657,7 +682,7 @@ export async function setCurrentAccount(
   poolState.lastSelectedId = accountId
   syncGlobalStateToAccount(account)
 
-  await savePoolState()
+  savePoolState()
 
   return { success: true, account }
 }

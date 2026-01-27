@@ -9,6 +9,7 @@ import type {
 } from "./account-pool-types"
 
 import { notifyQuotaLow } from "./account-pool-notify"
+import { invalidateActiveAccountsCache } from "./account-pool-store"
 
 const QUOTA_THRESHOLD_PERCENT = 5
 const QUOTA_REFRESH_INTERVAL = 5 * 60 * 1000
@@ -95,6 +96,7 @@ async function handleQuotaLow({
 }: QuotaLowContext): Promise<boolean> {
   account.paused = true
   account.pausedReason = "quota"
+  invalidateActiveAccountsCache()
   consola.warn(
     `Account ${account.login} auto-paused: quota at ${quotaPercent.toFixed(1)}%`,
   )
@@ -124,15 +126,16 @@ async function handleQuotaLow({
 function handleQuotaRecovered(account: AccountStatus): boolean {
   account.paused = false
   account.pausedReason = undefined
+  invalidateActiveAccountsCache()
   consola.info(`Account ${account.login} reactivated: quota recovered`)
   return true
 }
 
-export async function checkAndAutoPauseAccounts(
+export function checkAndAutoPauseAccounts(
   poolState: PoolState,
   rotateToNextAccount: RotateFn,
-  savePoolState: () => Promise<void>,
-): Promise<void> {
+  savePoolState: () => void,
+): void {
   let changed = false
   for (const account of poolState.accounts) {
     if (account.paused && account.pausedReason === "manual") {
@@ -141,12 +144,16 @@ export async function checkAndAutoPauseAccounts(
 
     const quotaPercent = getEffectiveQuotaPercent(account)
     if (quotaPercent <= QUOTA_THRESHOLD_PERCENT && !account.paused) {
-      changed ||= await handleQuotaLow({
+      // Fire and forget async quota low handling
+      void handleQuotaLow({
         account,
         quotaPercent,
         poolState,
         rotateToNextAccount,
+      }).then((result) => {
+        if (result) savePoolState()
       })
+      changed = true
     } else if (
       quotaPercent > QUOTA_THRESHOLD_PERCENT
       && account.pausedReason === "quota"
@@ -156,29 +163,31 @@ export async function checkAndAutoPauseAccounts(
   }
 
   if (changed) {
-    await savePoolState()
+    savePoolState()
   }
 }
 
-export async function refreshAllQuotas(
+export function refreshAllQuotas(
   poolState: PoolState,
-  savePoolState: () => Promise<void>,
-): Promise<void> {
+  savePoolState: () => void,
+): void {
   consola.info("Refreshing quota for all accounts...")
-  for (const account of poolState.accounts) {
-    await fetchAccountQuota(account, poolState)
-  }
-  await savePoolState()
-  consola.success("Quota refreshed for all accounts")
+  const refreshPromises = poolState.accounts.map((account) =>
+    fetchAccountQuota(account, poolState),
+  )
+  void Promise.all(refreshPromises).then(() => {
+    savePoolState()
+    consola.success("Quota refreshed for all accounts")
+  })
 }
 
 let lastMonthCheck: number | null = null
 
-export async function checkMonthlyReset(
+export function checkMonthlyReset(
   poolState: PoolState,
-  refreshAllQuotasFn: () => Promise<void>,
-  savePoolState: () => Promise<void>,
-): Promise<void> {
+  refreshAllQuotasFn: () => void,
+  savePoolState: () => void,
+): void {
   const now = new Date()
   const currentMonth = now.getFullYear() * 12 + now.getMonth()
 
@@ -203,8 +212,9 @@ export async function checkMonthlyReset(
     }
 
     if (changed) {
-      await savePoolState()
-      await refreshAllQuotasFn()
+      invalidateActiveAccountsCache()
+      savePoolState()
+      refreshAllQuotasFn()
     }
   }
 }

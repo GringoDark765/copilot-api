@@ -3,10 +3,16 @@ import consola from "consola"
 import type { AccountStatus } from "./account-pool-types"
 
 import { getEffectiveQuotaPercent } from "./account-pool-quota"
-import { poolConfig, poolState } from "./account-pool-store"
+import {
+  getActiveAccounts,
+  invalidateActiveAccountsCache,
+  poolConfig,
+  poolState,
+} from "./account-pool-store"
 
 function resetExpiredRateLimits(): AccountStatus | null {
   const now = Date.now()
+  let accountReset = false
   for (const account of poolState.accounts) {
     if (
       account.rateLimited
@@ -16,10 +22,17 @@ function resetExpiredRateLimits(): AccountStatus | null {
     ) {
       account.rateLimited = false
       account.rateLimitResetAt = undefined
+      accountReset = true
       if (account.active) {
+        // Invalidate cache since rate limit status changed
+        invalidateActiveAccountsCache()
         return account
       }
     }
+  }
+  // Invalidate cache if any account's rate limit was reset
+  if (accountReset) {
+    invalidateActiveAccountsCache()
   }
   return null
 }
@@ -61,9 +74,8 @@ export function selectAccount(): AccountStatus | null {
     return null
   }
 
-  const activeAccounts = poolState.accounts.filter(
-    (a) => a.active && !a.rateLimited && !a.paused,
-  )
+  // Use cached active accounts instead of filtering every time
+  const activeAccounts = getActiveAccounts()
 
   if (activeAccounts.length === 0) {
     const resetAccount = resetExpiredRateLimits()
@@ -125,8 +137,9 @@ export function selectAccount(): AccountStatus | null {
 export function findNextAvailableAccount(
   excludeId: string,
 ): AccountStatus | null {
-  const availableAccounts = poolState.accounts.filter(
-    (a) => a.id !== excludeId && a.active && !a.rateLimited && !a.paused,
+  // Use cached active accounts and filter out excluded
+  const availableAccounts = getActiveAccounts().filter(
+    (a) => a.id !== excludeId,
   )
   if (availableAccounts.length === 0) return null
   return availableAccounts.reduce((best, current) => {
@@ -137,9 +150,8 @@ export function findNextAvailableAccount(
 }
 
 export function getCurrentAccount(): AccountStatus | null {
-  const activeAccounts = poolState.accounts.filter(
-    (a) => a.active && !a.rateLimited && !a.paused,
-  )
+  // Use cached active accounts
+  const activeAccounts = getActiveAccounts()
 
   if (activeAccounts.length === 0) return null
 

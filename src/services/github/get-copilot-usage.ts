@@ -1,11 +1,19 @@
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { fetchWithTimeout } from "~/lib/fetch-with-timeout"
 import { state } from "~/lib/state"
 
+// Timeout for usage requests (10 seconds)
+const USAGE_REQUEST_TIMEOUT = 10000
+
 export const getCopilotUsage = async (): Promise<CopilotUsageResponse> => {
-  const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
-    headers: githubHeaders(state),
-  })
+  const response = await fetchWithTimeout(
+    `${GITHUB_API_BASE_URL}/copilot_internal/user`,
+    {
+      headers: githubHeaders(state),
+      timeout: USAGE_REQUEST_TIMEOUT,
+    },
+  )
 
   if (!response.ok) {
     throw new HTTPError("Failed to get Copilot usage", response)
@@ -20,13 +28,17 @@ export const getCopilotUsage = async (): Promise<CopilotUsageResponse> => {
 export const getCopilotUsageForAccount = async (
   githubToken: string,
 ): Promise<CopilotUsageResponse> => {
-  const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
-    headers: {
-      Authorization: `token ${githubToken}`,
-      Accept: "application/json",
-      "User-Agent": "copilot-api",
+  const response = await fetchWithTimeout(
+    `${GITHUB_API_BASE_URL}/copilot_internal/user`,
+    {
+      headers: {
+        Authorization: `token ${githubToken}`,
+        Accept: "application/json",
+        "User-Agent": "copilot-api",
+      },
+      timeout: USAGE_REQUEST_TIMEOUT,
     },
-  })
+  )
 
   if (!response.ok) {
     throw new HTTPError("Failed to get Copilot usage for account", response)

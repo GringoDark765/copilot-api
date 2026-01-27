@@ -1,6 +1,6 @@
 /**
  * Request Queue Module
- * Manages concurrent request limits with priority queue
+ * Manages concurrent request limits with priority queue (binary heap)
  */
 
 import consola from "consola"
@@ -44,6 +44,117 @@ export interface QueueMetrics {
   peakQueueSize: number
 }
 
+/**
+ * Priority Queue implementation using binary max-heap
+ * O(log n) insertion and extraction, O(1) peek
+ */
+class PriorityQueue<T> {
+  private heap: Array<T> = []
+  private compare: (a: T, b: T) => number
+
+  constructor(compareFn: (a: T, b: T) => number) {
+    this.compare = compareFn
+  }
+
+  get length(): number {
+    return this.heap.length
+  }
+
+  push(item: T): void {
+    this.heap.push(item)
+    this.bubbleUp(this.heap.length - 1)
+  }
+
+  pop(): T | undefined {
+    if (this.heap.length === 0) return undefined
+    if (this.heap.length === 1) return this.heap.pop()
+
+    const top = this.heap[0]
+    const last = this.heap.pop()
+    if (last !== undefined) {
+      this.heap[0] = last
+      this.bubbleDown(0)
+    }
+    return top
+  }
+
+  peek(): T | undefined {
+    return this.heap[0]
+  }
+
+  remove(predicate: (item: T) => boolean): T | undefined {
+    const index = this.heap.findIndex((item) => predicate(item))
+    if (index === -1) return undefined
+
+    const item = this.heap[index]
+    if (index === this.heap.length - 1) {
+      this.heap.pop()
+    } else {
+      const last = this.heap.pop()
+      if (last !== undefined) {
+        this.heap[index] = last
+        // Try both directions to maintain heap property
+        this.bubbleUp(index)
+        this.bubbleDown(index)
+      }
+    }
+    return item
+  }
+
+  clear(): Array<T> {
+    const items = this.heap
+    this.heap = []
+    return items
+  }
+
+  toArray(): Array<T> {
+    return [...this.heap]
+  }
+
+  private bubbleUp(startIndex: number): void {
+    let idx = startIndex
+    while (idx > 0) {
+      const parentIndex = Math.floor((idx - 1) / 2)
+      if (this.compare(this.heap[idx], this.heap[parentIndex]) <= 0) break
+      ;[this.heap[idx], this.heap[parentIndex]] = [
+        this.heap[parentIndex],
+        this.heap[idx],
+      ]
+      idx = parentIndex
+    }
+  }
+
+  private bubbleDown(startIndex: number): void {
+    const length = this.heap.length
+    let idx = startIndex
+    while (true) {
+      const leftChild = 2 * idx + 1
+      const rightChild = 2 * idx + 2
+      let largest = idx
+
+      if (
+        leftChild < length
+        && this.compare(this.heap[leftChild], this.heap[largest]) > 0
+      ) {
+        largest = leftChild
+      }
+      if (
+        rightChild < length
+        && this.compare(this.heap[rightChild], this.heap[largest]) > 0
+      ) {
+        largest = rightChild
+      }
+
+      if (largest === idx) break
+      ;[this.heap[idx], this.heap[largest]] = [
+        this.heap[largest],
+        this.heap[idx],
+      ]
+      idx = largest
+    }
+  }
+}
+
 // Default configuration
 const DEFAULT_CONFIG: QueueConfig = {
   enabled: false,
@@ -54,7 +165,11 @@ const DEFAULT_CONFIG: QueueConfig = {
 
 // Queue state
 let queueConfig: QueueConfig = { ...DEFAULT_CONFIG }
-let queue: Array<QueuedRequest> = []
+// Priority queue: higher priority first, then earlier enqueue time
+const queue = new PriorityQueue<QueuedRequest>((a, b) => {
+  if (a.priority !== b.priority) return a.priority - b.priority
+  return b.enqueuedAt - a.enqueuedAt // Earlier enqueue = higher priority
+})
 let running = 0
 let paused = false
 const runningRequests: Map<string, QueuedRequest> = new Map()
@@ -147,15 +262,15 @@ export function resumeQueue(): void {
  * Clear the queue (reject all pending)
  */
 export function clearQueue(): number {
-  const count = queue.length
-  for (const request of queue) {
+  const items = queue.clear()
+  const count = items.length
+  for (const request of items) {
     if (request.timeoutId) {
       clearTimeout(request.timeoutId)
     }
     request.reject(new Error("Queue cleared"))
     metrics.totalRejected++
   }
-  queue = []
   consola.info(`Queue cleared: ${count} requests rejected`)
   return count
 }
@@ -175,10 +290,8 @@ function processNext(): void {
   if (running >= queueConfig.maxConcurrent) return
   if (queue.length === 0) return
 
-  // Sort by priority (higher first)
-  queue.sort((a, b) => b.priority - a.priority)
-
-  const request = queue.shift()
+  // Pop highest priority request (O(log n) instead of O(n log n) sort)
+  const request = queue.pop()
   if (!request) return
 
   running++
@@ -254,9 +367,8 @@ export async function enqueueRequest(
 
     // Set timeout
     request.timeoutId = setTimeout(() => {
-      const index = queue.findIndex((r) => r.id === requestId)
-      if (index !== -1) {
-        queue.splice(index, 1)
+      const removed = queue.remove((r) => r.id === requestId)
+      if (removed) {
         metrics.totalTimedOut++
         reject(new QueueTimeoutError("Request timed out in queue"))
       }

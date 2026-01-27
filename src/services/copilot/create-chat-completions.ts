@@ -4,9 +4,13 @@ import { events } from "fetch-event-stream"
 import { getCurrentAccount, isPoolEnabledSync } from "~/lib/account-pool"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { fetchWithTimeout } from "~/lib/fetch-with-timeout"
 import { logEmitter } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { getActiveCopilotToken } from "~/lib/token"
+
+// Timeout for chat completions (2 minutes for long streaming responses)
+const CHAT_COMPLETION_TIMEOUT = 120000
 
 /**
  * Get account info string for error messages
@@ -45,11 +49,15 @@ export const createChatCompletions = async (
     "X-Initiator": isAgentCall ? "agent" : "user",
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  })
+  const response = await fetchWithTimeout(
+    `${copilotBaseUrl(state)}/chat/completions`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      timeout: CHAT_COMPLETION_TIMEOUT,
+    },
+  )
 
   if (!response.ok) {
     // Get account info for error message

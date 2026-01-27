@@ -3,12 +3,15 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import type { PoolConfig, PoolState } from "./account-pool-types"
+import type { AccountStatus, PoolConfig, PoolState } from "./account-pool-types"
 
 import { getConfig, saveConfig } from "./config"
 
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const POOL_FILE = path.join(CONFIG_DIR, "account-pool.json")
+
+// Debounce delay for saving pool state (500ms)
+const SAVE_DEBOUNCE_MS = 500
 
 export let poolState: PoolState = {
   accounts: [],
@@ -22,6 +25,12 @@ export let poolConfig: PoolConfig = {
 }
 
 let poolStateLoaded = false
+let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null
+let pendingSave = false
+
+// Cached active accounts list
+let cachedActiveAccounts: Array<AccountStatus> | null = null
+let cacheVersion = 0
 
 export function markPoolStateLoaded(): void {
   poolStateLoaded = true
@@ -33,10 +42,40 @@ export function isPoolStateLoaded(): boolean {
 
 export function setPoolState(next: PoolState): void {
   poolState = next
+  invalidateActiveAccountsCache()
 }
 
 export function setPoolConfig(next: PoolConfig): void {
   poolConfig = next
+}
+
+/**
+ * Invalidate the active accounts cache
+ * Call this when account status changes
+ */
+export function invalidateActiveAccountsCache(): void {
+  cachedActiveAccounts = null
+  cacheVersion++
+}
+
+/**
+ * Get active accounts with caching
+ * Avoids filtering on every request
+ */
+export function getActiveAccounts(): Array<AccountStatus> {
+  if (cachedActiveAccounts === null) {
+    cachedActiveAccounts = poolState.accounts.filter(
+      (a) => a.active && !a.rateLimited && !a.paused,
+    )
+  }
+  return cachedActiveAccounts
+}
+
+/**
+ * Get current cache version for checking staleness
+ */
+export function getCacheVersion(): number {
+  return cacheVersion
 }
 
 async function ensureDir(): Promise<void> {
@@ -72,7 +111,46 @@ export async function loadPoolState(): Promise<void> {
   }
 }
 
-export async function savePoolState(): Promise<void> {
+export function savePoolState(): void {
+  // Mark that we need to save
+  pendingSave = true
+
+  // Clear existing timer if any
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer)
+  }
+
+  // Set new timer for debounced save
+  saveDebounceTimer = setTimeout(() => {
+    if (!pendingSave) return
+    pendingSave = false
+
+    void ensureDir()
+      .then(() => {
+        const stateToSave = {
+          ...poolState,
+          config: {
+            enabled: poolConfig.enabled,
+            strategy: poolConfig.strategy,
+          },
+        }
+        return fs.writeFile(POOL_FILE, JSON.stringify(stateToSave, null, 2))
+      })
+      .catch((error: unknown) => {
+        consola.error("Failed to save pool state:", error)
+      })
+  }, SAVE_DEBOUNCE_MS)
+}
+
+/**
+ * Force immediate save (for shutdown scenarios)
+ */
+export async function savePoolStateImmediate(): Promise<void> {
+  if (saveDebounceTimer) {
+    clearTimeout(saveDebounceTimer)
+    saveDebounceTimer = null
+  }
+
   try {
     await ensureDir()
     const stateToSave = {
@@ -83,6 +161,7 @@ export async function savePoolState(): Promise<void> {
       },
     }
     await fs.writeFile(POOL_FILE, JSON.stringify(stateToSave, null, 2))
+    pendingSave = false
   } catch (error) {
     consola.error("Failed to save pool state:", error)
   }
