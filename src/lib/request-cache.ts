@@ -11,6 +11,8 @@ import os from "node:os"
 import path from "node:path"
 
 import { getConfig } from "./config"
+import { registerInterval } from "./intervals"
+import { registerShutdownHandler } from "./shutdown"
 
 export interface CacheEntry {
   key: string
@@ -152,8 +154,11 @@ function resetLRU(): void {
 async function ensureDir(): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true })
-  } catch {
-    // Directory exists
+  } catch (error) {
+    // Only ignore EEXIST, log other errors
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      consola.warn("Failed to create cache directory:", error)
+    }
   }
 }
 
@@ -500,17 +505,16 @@ export async function initCache(): Promise<void> {
   }
 
   // Auto-save every 5 minutes
-  setInterval(
+  const intervalId = setInterval(
     () => {
       saveCache()
     },
     5 * 60 * 1000,
   )
+  registerInterval("request-cache-autosave", intervalId)
 
-  // Save on process exit
-  process.on("beforeExit", () => {
-    saveCache()
-  })
+  // Register shutdown handler
+  registerShutdownHandler("request-cache", saveCache, 20)
 
   consola.debug(
     `Request cache initialized: enabled=${cacheConfig.enabled}, maxSize=${cacheConfig.maxSize}`,
