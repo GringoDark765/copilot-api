@@ -174,60 +174,89 @@ function handleNonStreamingResponse(
   return c.json(response)
 }
 
+function tryParseStreamUsage(data: string): number | null {
+  try {
+    const parsed = JSON.parse(data) as StreamUsageChunk
+    return parsed.usage?.completion_tokens ?? null
+  } catch {
+    return null
+  }
+}
+
 function handleStreamingResponse(c: Context, ctx: CompletionContext): Response {
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
     let streamOutputTokens = 0
 
-    const response = await createChatCompletions(ctx.payload)
-    usageStats.recordRequest(ctx.payload.model)
+    try {
+      const response = await createChatCompletions(ctx.payload)
+      usageStats.recordRequest(ctx.payload.model)
 
-    if (isNonStreaming(response)) {
-      const data = JSON.stringify(response)
-      await stream.writeSSE({ data })
-      return
-    }
-
-    for await (const chunk of response) {
-      consola.debug("Streaming chunk:", JSON.stringify(chunk))
-      const sseMessage: SSEMessage = {
-        data: chunk.data ?? "",
-        event: chunk.event,
-        id: typeof chunk.id === "string" ? chunk.id : undefined,
+      if (isNonStreaming(response)) {
+        const data = JSON.stringify(response)
+        await stream.writeSSE({ data })
+        return
       }
-      await stream.writeSSE(sseMessage)
 
-      if (chunk.data && chunk.data !== "[DONE]") {
-        try {
-          const parsed = JSON.parse(chunk.data) as StreamUsageChunk
-          if (parsed.usage?.completion_tokens) {
-            streamOutputTokens = parsed.usage.completion_tokens
+      for await (const chunk of response) {
+        consola.debug("Streaming chunk:", JSON.stringify(chunk))
+        const sseMessage: SSEMessage = {
+          data: chunk.data ?? "",
+          event: chunk.event,
+          id: typeof chunk.id === "string" ? chunk.id : undefined,
+        }
+        await stream.writeSSE(sseMessage)
+
+        if (chunk.data && chunk.data !== "[DONE]") {
+          const tokens = tryParseStreamUsage(chunk.data)
+          if (tokens !== null) {
+            streamOutputTokens = tokens
           }
-        } catch {
-          // Ignore parse errors
         }
       }
+
+      const finalOutputTokens =
+        streamOutputTokens || Math.round(ctx.inputTokens * 0.5)
+      const cost = costCalculator.record(
+        ctx.payload.model,
+        ctx.inputTokens,
+        finalOutputTokens,
+      )
+
+      recordHistoryEntry({
+        ctx,
+        outputTokens: finalOutputTokens,
+        cost: cost.totalCost,
+        status: "success",
+      })
+
+      logEmitter.log(
+        "success",
+        `Chat completion stream done: model=${ctx.payload.model}${ctx.accountInfo ? `, account=${ctx.accountInfo}` : ""}`,
+      )
+    } catch (error) {
+      consola.error("Streaming error:", error)
+
+      recordHistoryEntry({
+        ctx,
+        outputTokens: streamOutputTokens,
+        cost: 0,
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      })
+
+      // Send error event to client
+      await stream.writeSSE({
+        event: "error",
+        data: JSON.stringify({
+          error: {
+            message:
+              error instanceof Error ? error.message : "Stream error occurred",
+            type: "stream_error",
+          },
+        }),
+      })
     }
-
-    const finalOutputTokens =
-      streamOutputTokens || Math.round(ctx.inputTokens * 0.5)
-    const cost = costCalculator.record(
-      ctx.payload.model,
-      ctx.inputTokens,
-      finalOutputTokens,
-    )
-
-    recordHistoryEntry({
-      ctx,
-      outputTokens: finalOutputTokens,
-      cost: cost.totalCost,
-      status: "success",
-    })
-
-    logEmitter.log(
-      "success",
-      `Chat completion stream done: model=${ctx.payload.model}${ctx.accountInfo ? `, account=${ctx.accountInfo}` : ""}`,
-    )
   })
 }
 
