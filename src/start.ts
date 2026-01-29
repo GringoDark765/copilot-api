@@ -28,6 +28,7 @@ import { usageStats } from "./lib/usage-stats"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
 import { webhook } from "./lib/webhook"
 import { server } from "./server"
+import { initSessionCleanup } from "./webui/routes"
 
 interface RunServerOptions {
   port: number
@@ -143,6 +144,7 @@ async function initializeServices(config: Config): Promise<void> {
     maxSize: config.queueMaxSize,
     timeout: config.queueTimeout,
   })
+  initSessionCleanup()
 }
 
 /**

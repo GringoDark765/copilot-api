@@ -1,3 +1,5 @@
+import consola from "consola"
+
 export async function notifyRateLimit(
   accountLogin: string,
   resetAt: number,
@@ -5,15 +7,15 @@ export async function notifyRateLimit(
   try {
     const { webhook } = await import("./webhook")
     await webhook.sendRateLimit(accountLogin, resetAt)
-  } catch {
-    // Webhook not initialized
+  } catch (error) {
+    consola.debug("Failed to send rate limit webhook:", error)
   }
 
   try {
     const { notificationCenter } = await import("./notification-center")
     notificationCenter.rateLimit(accountLogin, resetAt)
-  } catch {
-    // Notification center not initialized
+  } catch (error) {
+    consola.debug("Failed to send rate limit notification:", error)
   }
 }
 
@@ -21,15 +23,15 @@ export async function notifyAuthError(accountLogin: string): Promise<void> {
   try {
     const { webhook } = await import("./webhook")
     await webhook.sendAccountError(accountLogin, "Authentication failed")
-  } catch {
-    // Webhook not initialized
+  } catch (error) {
+    consola.debug("Failed to send auth error webhook:", error)
   }
 
   try {
     const { notificationCenter } = await import("./notification-center")
     notificationCenter.accountError(accountLogin, "Authentication failed")
-  } catch {
-    // Notification center not initialized
+  } catch (error) {
+    consola.debug("Failed to send auth error notification:", error)
   }
 }
 
@@ -41,15 +43,15 @@ export async function notifyAccountRotation(
   try {
     const { webhook } = await import("./webhook")
     await webhook.sendAccountRotation(fromAccount, toAccount, reason)
-  } catch {
-    // Webhook not initialized
+  } catch (error) {
+    consola.debug("Failed to send account rotation webhook:", error)
   }
 
   try {
     const { notificationCenter } = await import("./notification-center")
     notificationCenter.accountRotation(fromAccount, toAccount, reason)
-  } catch {
-    // Notification center not initialized
+  } catch (error) {
+    consola.debug("Failed to send account rotation notification:", error)
   }
 }
 
@@ -60,14 +62,14 @@ export async function notifyQuotaLow(
   try {
     const { webhook } = await import("./webhook")
     await webhook.sendQuotaLow(accountLogin, quotaPercent)
-  } catch {
-    // Webhook not initialized
+  } catch (error) {
+    consola.debug("Failed to send quota low webhook:", error)
   }
 
   try {
     const { notificationCenter } = await import("./notification-center")
     notificationCenter.quotaLow(accountLogin, quotaPercent)
-  } catch {
-    // Notification center not initialized
+  } catch (error) {
+    consola.debug("Failed to send quota low notification:", error)
   }
 }
