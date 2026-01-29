@@ -353,10 +353,18 @@ function getAnthropicToolUseBlocks(
   if (!toolCalls) {
     return []
   }
-  return toolCalls.map((toolCall) => ({
-    type: "tool_use",
-    id: toolCall.id,
-    name: toolCall.function.name,
-    input: JSON.parse(toolCall.function.arguments) as Record<string, unknown>,
-  }))
+  return toolCalls.map((toolCall) => {
+    let input: Record<string, unknown> = {}
+    try {
+      input = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
+    } catch {
+      // Use empty object for malformed JSON arguments
+    }
+    return {
+      type: "tool_use",
+      id: toolCall.id,
+      name: toolCall.function.name,
+      input,
+    }
+  })
 }
