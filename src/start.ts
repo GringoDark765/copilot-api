@@ -9,6 +9,7 @@ import invariant from "tiny-invariant"
 import { addInitialAccount, getCurrentAccount } from "./lib/account-pool"
 import { loadConfig, saveConfig, type Config } from "./lib/config"
 import { costCalculator } from "./lib/cost-calculator"
+import { clearAllIntervals } from "./lib/intervals"
 import { logEmitter } from "./lib/logger"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
@@ -16,6 +17,7 @@ import { requestCache } from "./lib/request-cache"
 import { requestHistory } from "./lib/request-history"
 import { initQueue } from "./lib/request-queue"
 import { generateEnvScript } from "./lib/shell"
+import { initShutdownHandlers, registerShutdownHandler } from "./lib/shutdown"
 import { state } from "./lib/state"
 import {
   setupAccountPool,
@@ -194,6 +196,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.rateLimitSeconds = config.rateLimitSeconds
   state.rateLimitWait = config.rateLimitWait
   await applyCliOptions(options)
+
+  // Initialize shutdown handlers first
+  initShutdownHandlers()
+
+  // Register interval cleanup as last shutdown handler
+  registerShutdownHandler("intervals", clearAllIntervals, 100)
 
   await initializeServices(config)
 

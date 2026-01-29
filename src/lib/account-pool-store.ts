@@ -6,6 +6,7 @@ import path from "node:path"
 import type { AccountStatus, PoolConfig, PoolState } from "./account-pool-types"
 
 import { getConfig, saveConfig } from "./config"
+import { registerShutdownHandler } from "./shutdown"
 
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const POOL_FILE = path.join(CONFIG_DIR, "account-pool.json")
@@ -81,8 +82,11 @@ export function getCacheVersion(): number {
 async function ensureDir(): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true })
-  } catch {
-    // Directory exists
+  } catch (error) {
+    // Only ignore EEXIST, log other errors
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      consola.warn("Failed to create account pool directory:", error)
+    }
   }
 }
 
@@ -202,5 +206,8 @@ export async function ensurePoolStateLoaded(): Promise<void> {
   if (!poolStateLoaded) {
     await loadPoolState()
     markPoolStateLoaded()
+
+    // Register shutdown handler for immediate save (high priority)
+    registerShutdownHandler("account-pool", savePoolStateImmediate, 10)
   }
 }
