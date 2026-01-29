@@ -8,6 +8,9 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
+import { registerInterval } from "./intervals"
+import { registerShutdownHandler } from "./shutdown"
+
 export interface RequestHistoryEntry {
   id: string
   timestamp: number
@@ -50,8 +53,11 @@ let isDirty = false
 async function ensureDir(): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true })
-  } catch {
-    // Directory exists
+  } catch (error) {
+    // Only ignore EEXIST, log other errors
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      consola.warn("Failed to create request history directory:", error)
+    }
   }
 }
 
@@ -77,6 +83,10 @@ function setIsSaving(value: boolean): void {
   isSaving = value
 }
 
+function markDirty(): void {
+  isDirty = true
+}
+
 /**
  * Save history to disk
  */
@@ -84,14 +94,16 @@ async function saveHistory(): Promise<void> {
   if (!isDirty || isSaving) return
 
   setIsSaving(true)
+  const snapshot = [...history] // Snapshot current state
   isDirty = false
+
   try {
     await ensureDir()
-    await fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2))
+    await fs.writeFile(HISTORY_FILE, JSON.stringify(snapshot, null, 2))
     consola.debug("Request history saved")
   } catch (error) {
-    // Mark dirty again on failure - use OR to preserve any new dirty state
-    isDirty ||= true
+    // Restore dirty flag on failure
+    markDirty()
     consola.error("Failed to save request history:", error)
   } finally {
     setIsSaving(false)
@@ -300,17 +312,16 @@ export async function initRequestHistory(): Promise<void> {
   await loadHistory()
 
   // Auto-save every 5 minutes
-  setInterval(
+  const intervalId = setInterval(
     () => {
       void saveHistory()
     },
     5 * 60 * 1000,
   )
+  registerInterval("request-history-autosave", intervalId)
 
-  // Save on process exit
-  process.on("beforeExit", () => {
-    void saveHistory()
-  })
+  // Register shutdown handler
+  registerShutdownHandler("request-history", saveHistory, 20)
 
   consola.debug("Request history module initialized")
 }
