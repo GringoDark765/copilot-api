@@ -9,6 +9,8 @@ import os from "node:os"
 import path from "node:path"
 
 import { getConfig } from "./config"
+import { registerInterval } from "./intervals"
+import { registerShutdownHandler } from "./shutdown"
 // Storage path
 const CONFIG_DIR = path.join(os.homedir(), ".config", "copilot-api")
 const HISTORY_FILE = path.join(CONFIG_DIR, "usage-history.json")
@@ -49,8 +51,11 @@ function getCurrentHourKey(): string {
 async function ensureDir(): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true })
-  } catch {
-    // Directory already exists
+  } catch (error) {
+    // Only ignore EEXIST, log other errors
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      consola.warn("Failed to create usage stats directory:", error)
+    }
   }
 }
 
@@ -271,17 +276,16 @@ async function init(): Promise<void> {
   prune()
 
   // Auto-save every 5 minutes
-  setInterval(
+  const intervalId = setInterval(
     () => {
       void save()
     },
     5 * 60 * 1000,
   )
+  registerInterval("usage-stats-autosave", intervalId)
 
-  // Save on process exit
-  process.on("beforeExit", () => {
-    void save()
-  })
+  // Register shutdown handler
+  registerShutdownHandler("usage-stats", save, 20)
 }
 
 export const usageStats = {

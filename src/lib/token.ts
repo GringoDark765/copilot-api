@@ -7,7 +7,9 @@ import {
   isPoolEnabledSync,
 } from "~/lib/account-pool"
 import { getConfig } from "~/lib/config"
+import { registerInterval } from "~/lib/intervals"
 import { PATHS } from "~/lib/paths"
+import { sleep } from "~/lib/retry"
 import { getCopilotToken } from "~/services/github/get-copilot-token"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
@@ -15,6 +17,14 @@ import { pollAccessToken } from "~/services/github/poll-access-token"
 
 import { HTTPError } from "./error"
 import { state } from "./state"
+
+// Constants for token refresh retry logic
+const MAX_TOKEN_REFRESH_RETRIES = 3
+
+function maskToken(token: string): string {
+  if (token.length <= 8) return "***"
+  return `${token.slice(0, 4)}...${token.slice(-4)}`
+}
 
 const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 
@@ -59,24 +69,39 @@ export const setupCopilotToken = async (tokenOverride?: string) => {
   // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
   if (state.showToken) {
-    consola.info("Copilot token:", token)
+    consola.info("Copilot token:", maskToken(token))
   }
 
   const refreshInterval = (refresh_in - 60) * 1000
-  setInterval(async () => {
+  const intervalId = setInterval(async () => {
     consola.debug("Refreshing Copilot token")
-    try {
-      const { token: newToken } = await getCopilotToken(tokenSource)
-      updateState("copilotToken", newToken)
-      consola.debug("Copilot token refreshed")
-      if (state.showToken) {
-        consola.info("Refreshed Copilot token:", newToken)
+
+    for (let attempt = 1; attempt <= MAX_TOKEN_REFRESH_RETRIES; attempt++) {
+      try {
+        const { token: newToken } = await getCopilotToken(tokenSource)
+        updateState("copilotToken", newToken)
+        consola.debug("Copilot token refreshed")
+        if (state.showToken) {
+          consola.info("Refreshed Copilot token:", maskToken(newToken))
+        }
+        return // Success, exit
+      } catch (error) {
+        consola.error(
+          `Failed to refresh Copilot token (attempt ${attempt}/${MAX_TOKEN_REFRESH_RETRIES}):`,
+          error,
+        )
+        if (attempt < MAX_TOKEN_REFRESH_RETRIES) {
+          await sleep(attempt * 5000) // Exponential backoff
+        }
       }
-    } catch (error) {
-      consola.error("Failed to refresh Copilot token:", error)
-      throw error
     }
+
+    consola.error(
+      "All token refresh attempts failed. Token may become invalid.",
+    )
   }, refreshInterval)
+
+  registerInterval("copilot-token-refresh", intervalId)
 }
 
 interface SetupGitHubTokenOptions {
